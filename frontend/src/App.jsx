@@ -10,6 +10,43 @@ function useDebouncedValue(value, delay = 250) {
   return debounced
 }
 
+// 循环切换多个 badge（来回切换）
+function RotatingBadges({ items = [], getTone = () => '', prefix = 'rb' }) {
+  const [idx, setIdx] = useState(0)
+  useEffect(() => {
+    if (!items || items.length <= 1) return undefined
+    let dir = 1
+    const id = setInterval(() => {
+      setIdx((i) => {
+        const next = i + dir
+        if (next >= items.length) {
+          dir = -1
+          return items.length - 2 >= 0 ? items.length - 2 : 0
+        }
+        if (next < 0) {
+          dir = 1
+          return 1
+        }
+        return next
+      })
+    }, 2000)
+    return () => clearInterval(id)
+  }, [items])
+  return (
+    <>
+      {items.map((part, i) => (
+        <span
+          key={`${prefix}-${i}`}
+          className={`unit-tag ${getTone(part)}`}
+          style={{ display: items.length > 1 ? (i === idx ? 'inline-flex' : 'none') : 'inline-flex' }}
+        >
+          {part}
+        </span>
+      ))}
+    </>
+  )
+}
+
 const uploads = [
   {
     key: 'picking',
@@ -2117,22 +2154,21 @@ function App() {
                       {unitsLabel === '--' ? (
                         '--'
                       ) : (
-                        unitParts.map((part) => {
-                          const tone = part.startsWith('拣货')
-                            ? 'picking'
-                            : part.startsWith('分拨')
-                              ? 'sorting'
-                              : part.startsWith('单品')
-                                ? 'packing-single'
-                                : part.startsWith('多品')
-                                  ? 'packing-multi'
-                                  : 'packing'
-                          return (
-                            <span key={part} className={`unit-tag ${tone}`}>
-                              {part}
-                            </span>
-                          )
-                        })
+                        <RotatingBadges
+                          items={unitParts}
+                          getTone={(part) =>
+                            part.startsWith('拣货')
+                              ? 'picking'
+                              : part.startsWith('分拨')
+                                ? 'sorting'
+                                : part.startsWith('单品')
+                                  ? 'packing-single'
+                                  : part.startsWith('多品')
+                                    ? 'packing-multi'
+                                    : 'packing'
+                          }
+                          prefix={`units-${person.name}`}
+                        />
                       )}
                     </span>
                     <span>
@@ -2142,22 +2178,21 @@ function App() {
                       {effLabel === '--' ? (
                         '--'
                       ) : (
-                        effParts.map((part) => {
-                          const tone = part.startsWith('拣货')
-                            ? 'picking'
-                            : part.startsWith('分拨')
-                              ? 'sorting'
-                              : part.startsWith('单品')
-                                ? 'packing-single'
-                                : part.startsWith('多品')
-                                  ? 'packing-multi'
-                                  : 'packing'
-                          return (
-                            <span key={part} className={`unit-tag ${tone}`}>
-                              {part}
-                            </span>
-                          )
-                        })
+                        <RotatingBadges
+                          items={effParts}
+                          getTone={(part) =>
+                            part.startsWith('拣货')
+                              ? 'picking'
+                              : part.startsWith('分拨')
+                                ? 'sorting'
+                                : part.startsWith('单品')
+                                  ? 'packing-single'
+                                  : part.startsWith('多品')
+                                    ? 'packing-multi'
+                                    : 'packing'
+                          }
+                          prefix={`eff-${person.name}`}
+                        />
                       )}
                     </span>
                     <span>{ratio === null ? '--' : `${ratio.toFixed(0)}%`}</span>

@@ -1391,6 +1391,12 @@ button.ghost::before {
   background: transparent;
 }
 
+.table-row > span {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
 .badge-group {
   display: inline-flex;
   gap: 6px;
