@@ -857,9 +857,30 @@ function App() {
           const ratioIssue = !exempt && ratio !== null && (ratio < 75 || ratio > 100)
           if (!(forcedIssue || matchIssue || ratioIssue)) return false
         }
-        if (detailStageFilter === 'picking' && !person.groups.has('拣货')) return false
-        if (detailStageFilter === 'sorting' && !person.groups.has('分拨')) return false
-        if (detailStageFilter === 'packing' && !person.groups.has('打包')) return false
+        if (
+          detailStageFilter === 'picking' &&
+          !(
+            person.groups.has('拣货') ||
+            Number(person.pickingUnits || 0) > 0
+          )
+        )
+          return false
+        if (
+          detailStageFilter === 'sorting' &&
+          !(
+            person.groups.has('分拨') ||
+            Number(person.sortingUnits || 0) > 0
+          )
+        )
+          return false
+        if (
+          detailStageFilter === 'packing' &&
+          !(
+            person.groups.has('打包') ||
+            Number(person.packingSingleUnits || 0) + Number(person.packingMultiUnits || 0) > 0
+          )
+        )
+          return false
         if (teamFilter !== 'all' && !person.groups.has(teamFilter)) return false
         if (detailSearchNormalized) {
           const nameKey = normalizeName(person.name)
