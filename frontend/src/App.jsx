@@ -2049,8 +2049,9 @@ function App() {
                         : 'success'
                 // 行级背景状态：红 = 时效异常（ratioIssue），黄 = 未匹配（matchIssue），白 = 正常/白名单
                 let rowState = 'row-normal'
-                if (ratioIssue) rowState = 'row-error'
-                else if (matchIssue) rowState = 'row-warning'
+                // 优先显示“未匹配”为黄色，其次显示时效异常为红色
+                if (matchIssue) rowState = 'row-warning'
+                else if (ratioIssue) rowState = 'row-error'
                 const sourceName =
                   person.sources && person.sources.size ? Array.from(person.sources)[0] : person.name
                 const startMap =
