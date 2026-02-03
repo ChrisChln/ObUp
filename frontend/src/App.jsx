@@ -662,6 +662,7 @@ function App() {
   const [detailOnlyAbnormal, setDetailOnlyAbnormal] = useState(false)
   const [detailSearch, setDetailSearch] = useState('')
   const [uploadState, setUploadState] = useState({})
+  const [uploadStateByDate, setUploadStateByDate] = useState({})
   const [sortingReport, setSortingReport] = useState(null)
   const [pickingReport, setPickingReport] = useState(null)
   const [packingReport, setPackingReport] = useState(null)
@@ -979,8 +980,21 @@ function App() {
       if (!response.ok) throw new Error('request failed')
       const data = await response.json()
       setUploadState(data)
+      setUploadStateByDate((prev) => ({ ...prev, [dateKey]: data }))
     } catch (error) {
       setUploadState({})
+    }
+  }
+
+  const fetchUploadStateForDate = async (dateKey) => {
+    if (!dateKey) return
+    try {
+      const response = await fetch(`/api/uploads?date=${dateKey}`)
+      if (!response.ok) throw new Error('request failed')
+      const data = await response.json()
+      setUploadStateByDate((prev) => ({ ...prev, [dateKey]: data }))
+    } catch (error) {
+      setUploadStateByDate((prev) => ({ ...prev, [dateKey]: {} }))
     }
   }
 
@@ -1028,6 +1042,16 @@ function App() {
       setPackingReport(null)
     }
   }
+
+  // fetch upload states for visible date list (cache per date)
+  useEffect(() => {
+    if (!dateList || !dateList.length) return
+    dateList.forEach((d) => {
+      if (!uploadStateByDate[d.key]) {
+        fetchUploadStateForDate(d.key)
+      }
+    })
+  }, [dateList])
 
   const fetchAttendanceReport = async (dateKey) => {
     if (!dateKey) return
@@ -1665,16 +1689,33 @@ function App() {
           <div className="date-panel">
             <h3>{t('日期列表')}</h3>
             <div className="date-list">
-              {dateList.map((item) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  className={item.key === selectedDate ? 'date-item active' : 'date-item'}
-                  onClick={() => setSelectedDate(item.key)}
-                >
-                  {item.label}
-                </button>
-              ))}
+              {dateList.map((item) => {
+                const stateForDate = uploadStateByDate[item.key] || {}
+                const keys = uploads.map((u) => u.key)
+                // determine tone: waiting/partial/success/error
+                let tone = 'waiting'
+                if (stateForDate && Object.keys(stateForDate).length) {
+                  // if any error -> error
+                  const anyError = keys.some((k) => stateForDate[k]?.status === 'error')
+                  if (anyError) tone = 'error'
+                  else {
+                    const successCount = keys.filter((k) => stateForDate[k] && stateForDate[k].status && stateForDate[k].status !== 'waiting').length
+                    if (successCount === keys.length) tone = 'success'
+                    else if (successCount > 0) tone = 'partial'
+                    else tone = 'waiting'
+                  }
+                }
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    className={`${item.key === selectedDate ? 'date-item active' : 'date-item'} date-${tone}`}
+                    onClick={() => setSelectedDate(item.key)}
+                  >
+                    {item.label}
+                  </button>
+                )
+              })}
             </div>
             <div className="date-picker">
               <label htmlFor="datePicker">{t('更早日期')}</label>
