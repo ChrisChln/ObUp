@@ -809,6 +809,7 @@ function App() {
   )
   const debouncedDetailSearch = useDebouncedValue(detailSearch, 250)
   const detailSearchNormalized = useMemo(() => normalizeName(debouncedDetailSearch), [debouncedDetailSearch])
+  const detailSearchWorkKey = useMemo(() => normalizeWorkKey(debouncedDetailSearch), [debouncedDetailSearch])
   const [isFiltering, setIsFiltering] = useState(false)
 
   useEffect(() => {
@@ -965,7 +966,9 @@ function App() {
         if (teamFilter !== 'all' && !person.groups.has(teamFilter)) return false
         if (detailSearchNormalized) {
           const nameKey = normalizeName(person.name)
-          if (!nameKey.includes(detailSearchNormalized)) return false
+          const workKeyMatch =
+            detailSearchWorkKey && person.workKey && person.workKey.includes(detailSearchWorkKey)
+          if (!nameKey.includes(detailSearchNormalized) && !workKeyMatch) return false
         }
         return true
       }),
