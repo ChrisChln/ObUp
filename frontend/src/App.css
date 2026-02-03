@@ -203,6 +203,18 @@
   box-shadow: 0 6px 14px rgba(18, 19, 21, 0.12);
   transition: transform 0.18s ease, box-shadow 0.2s ease, background 0.2s ease;
 }
+
+.icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  color: currentColor;
+}
+.icon svg {
+  display: block;
+}
 .topnav__datedrop {
   position: absolute;
   right: 0;
@@ -648,7 +660,7 @@
 
 /* banner above upload panel */
 .upload-banner {
-  margin-bottom: 0px;
+  margin-bottom: 12px;
   border-radius: 12px;
   overflow: hidden;
   /* 红色背景填满整个框 - 精确 RGB(255,44,19) */
@@ -657,11 +669,11 @@
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: 8px;
+  padding: 0px;
 }
 .upload-banner-img {
   width: 85%;
-  max-width: 320px;
+  max-width: 300px;
   height: auto;
   object-fit: contain;
   display: block;

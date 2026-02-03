@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
+import Icon from './components/Icon'
 // 简单防抖 Hook
 function useDebouncedValue(value, delay = 250) {
   const [debounced, setDebounced] = useState(value)
@@ -120,12 +121,17 @@ const pad2 = (value) => String(value).padStart(2, '0')
 const formatHours = (hours) => `${hours.toFixed(1)}h`
 const toDateKey = (date) =>
   `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
-const toDateLabel = (date, locale = 'zh-CN') =>
-  date.toLocaleDateString(locale, {
-    month: '2-digit',
-    day: '2-digit',
-    weekday: 'short',
-  })
+const toDateLabel = (date, locale = 'zh-CN') => {
+  const mm = pad2(date.getMonth() + 1)
+  const dd = pad2(date.getDate())
+  const yyyy = date.getFullYear()
+  if (locale.startsWith('en')) {
+    const enWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+    return `${mm}/${dd}/${yyyy} ${enWeek[date.getDay()]}`
+  }
+  const zhWeek = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六']
+  return `${mm}/${dd}/${yyyy} ${zhWeek[date.getDay()]}`
+}
 
 const buildDateList = (days = 7, locale = 'zh-CN') =>
   Array.from({ length: days }, (_, index) => {
@@ -1582,7 +1588,7 @@ function App() {
             aria-haspopup="dialog"
             aria-expanded={showDateDropdown}
           >
-            {selectedDateLabel || t('请选择日期')}
+            <Icon name="calendar" /> <span style={{ marginLeft: 8 }}>{selectedDateLabel || t('请选择日期')}</span>
           </button>
           {showDateDropdown ? (
             <div className="topnav__datedrop" role="dialog" aria-label="日期选择">
@@ -1620,7 +1626,7 @@ function App() {
           className="topnav__leaders"
           onClick={() => setShowWhitelist(true)}
         >
-          {t('白名单')}
+          <Icon name="user" /> <span style={{ marginLeft: 8 }}>{t('白名单')}</span>
         </button>
         <button
           type="button"
@@ -1629,10 +1635,10 @@ function App() {
             document.getElementById('detailSection')?.scrollIntoView({ behavior: 'smooth' })
           }}
         >
-          {t('人员明细')}
+          <Icon name="user" /> <span style={{ marginLeft: 8 }}>{t('人员明细')}</span>
         </button>
         <button type="button" className="topnav__settings" onClick={() => setShowSettings(true)}>
-          {t('设置')}
+          <Icon name="settings" /> <span style={{ marginLeft: 8 }}>{t('设置')}</span>
         </button>
       </div>
 
@@ -1837,7 +1843,7 @@ function App() {
           </div>
           <div className="upload-banner">
             <img
-              src="https://www.line-stickers.com/wp-content/uploads/2018/09/Joy-JD-CENTRAL-.png"
+              src="https://static.foodtalks.cn/image/post/2f2fef56d86351a93519804c54ca5c2c.png"
               alt="banner"
               className="upload-banner-img"
             />
@@ -2991,4 +2997,3 @@ const buildStartTimeMap = (report, nameMap, stageType) => {
 }
 
 export default App
-
