@@ -2066,7 +2066,6 @@ function App() {
                   <div key={person.name} className="table-row">
                     <div className="person">
                       <strong>{person.name}</strong>
-                      <small>{detailText}</small>
                     </div>
                     <span className="badge-group">
                       {shiftTone ? (
