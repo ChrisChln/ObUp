@@ -2078,8 +2078,19 @@ function App() {
 
                 return (
                   <div key={person.name} className="table-row">
-                    <div className="person">
+                    <div className="person" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <strong>{person.name}</strong>
+                      <span
+                        className={`status-tag ${statusTone}`}
+                        role={canOpenMatch ? 'button' : undefined}
+                        onClick={() => {
+                          if (!canOpenMatch) return
+                          setSelectedMatchName(person.attendanceName || person.name)
+                          setShowMatch(true)
+                        }}
+                      >
+                        {statusLabel}
+                      </span>
                     </div>
                     <span className="badge-group">
                       {shiftTone ? (
@@ -2145,17 +2156,7 @@ function App() {
                       )}
                     </span>
                     <span>{ratio === null ? '--' : `${ratio.toFixed(0)}%`}</span>
-                    <span
-                      className={`status-tag ${statusTone}`}
-                      role={canOpenMatch ? 'button' : undefined}
-                      onClick={() => {
-                        if (!canOpenMatch) return
-                        setSelectedMatchName(person.attendanceName || person.name)
-                        setShowMatch(true)
-                      }}
-                    >
-                      {statusLabel}
-                    </span>
+                    {/* status moved next to name */}
                   </div>
                 )
               })
