@@ -1760,29 +1760,6 @@ function App() {
           </div>
         </div>
         <div className="hero__panel">
-          <div className="date-panel">
-            <h3>{t('日期列表')}</h3>
-            <div className="date-list">
-              <div style={{ padding: 8 }}>
-                <small>日期列表已移至顶部菜单</small>
-                <div>
-                  <button type="button" className="topnav__datebtn" onClick={() => setShowDateDropdown(true)}>
-                    {selectedDateLabel || t('请选择日期')}
-                  </button>
-                </div>
-              </div>
-            </div>
-            <div className="date-picker">
-              <label htmlFor="datePicker">{t('更早日期')}</label>
-              <input
-                id="datePicker"
-                type="date"
-                value={selectedDate}
-                max={toDateKey(new Date())}
-                onChange={(event) => setSelectedDate(event.target.value)}
-              />
-            </div>
-          </div>
           <div className="upload-panel">
             <div className="panel-header">
               <h3>{t('每日上传')}</h3>
