@@ -1765,6 +1765,13 @@ function App() {
         </div>
         <div className="hero__panel">
           <div className="upload-panel">
+            <div className="upload-banner">
+              <img
+                src="http://animation.china.com.cn/pic/2024-03/20/88827d7e-70a5-44df-9b9f-2ae970a75eb8.png"
+                alt="banner"
+                className="upload-banner-img"
+              />
+            </div>
             <div className="panel-header">
               <h3>{t('每日上传')}</h3>
               <span>{t('已选日期')}: {selectedDate} ({selectedDateLabel})</span>
