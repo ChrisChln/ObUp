@@ -2047,6 +2047,10 @@ function App() {
                       : matchedByManual
                         ? 'matched'
                         : 'success'
+                // 行级背景状态：红 = 时效异常（ratioIssue），黄 = 未匹配（matchIssue），白 = 正常/白名单
+                let rowState = 'row-normal'
+                if (ratioIssue) rowState = 'row-error'
+                else if (matchIssue) rowState = 'row-warning'
                 const sourceName =
                   person.sources && person.sources.size ? Array.from(person.sources)[0] : person.name
                 const startMap =
@@ -2077,7 +2081,7 @@ function App() {
                       : ''
 
                 return (
-                  <div key={person.name} className="table-row">
+                  <div key={person.name} className={`table-row ${rowState}`}>
                     <div className="person" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <strong>{person.name}</strong>
                       <span

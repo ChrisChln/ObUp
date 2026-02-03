@@ -1381,6 +1381,16 @@ button.ghost::before {
   border-bottom: 1px solid rgba(18, 19, 21, 0.08);
 }
 
+.table-row.row-error {
+  background: rgba(239, 68, 68, 0.06);
+}
+.table-row.row-warning {
+  background: rgba(250, 204, 21, 0.06);
+}
+.table-row.row-normal {
+  background: transparent;
+}
+
 .badge-group {
   display: flex;
   flex-direction: column;
