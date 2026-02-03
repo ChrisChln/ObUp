@@ -11,34 +11,77 @@ function useDebouncedValue(value, delay = 250) {
 }
 
 // 循环切换多个 badge（来回切换）
+// 全局 Badge 计时器单例，避免为每行创建多个 setInterval
+const BadgeTicker = (() => {
+  const listeners = new Set()
+  let id = null
+  const start = () => {
+    if (id) return
+    id = setInterval(() => {
+      listeners.forEach((cb) => {
+        try {
+          cb()
+        } catch (e) {
+          // ignore subscriber errors
+        }
+      })
+    }, 2000)
+  }
+  return {
+    subscribe(cb) {
+      listeners.add(cb)
+      start()
+      return () => listeners.delete(cb)
+    },
+  }
+})()
+
 function RotatingBadges({ items = [], getTone = () => '', prefix = 'rb' }) {
   const [idx, setIdx] = useState(0)
+  const dirRef = useRef(1)
+
   useEffect(() => {
-    if (!items || items.length <= 1) return undefined
-    let dir = 1
-    const id = setInterval(() => {
+    if (!items || items.length <= 1) {
+      setIdx(0)
+      return undefined
+    }
+    const unsub = BadgeTicker.subscribe(() => {
       setIdx((i) => {
-        const next = i + dir
+        let next = i + dirRef.current
         if (next >= items.length) {
-          dir = -1
-          return items.length - 2 >= 0 ? items.length - 2 : 0
-        }
-        if (next < 0) {
-          dir = 1
-          return 1
+          dirRef.current = -1
+          next = items.length - 2 >= 0 ? items.length - 2 : 0
+        } else if (next < 0) {
+          dirRef.current = 1
+          next = 1
         }
         return next
       })
-    }, 2000)
-    return () => clearInterval(id)
-  }, [items])
+    })
+    return () => {
+      unsub()
+      dirRef.current = 1
+    }
+  }, [items.length])
+
+  const handleClick = () => {
+    if (!items || items.length <= 1) return
+    setIdx((i) => {
+      const next = (i + 1) % items.length
+      dirRef.current = next === items.length - 1 ? -1 : 1
+      return next
+    })
+  }
+
   return (
     <>
       {items.map((part, i) => (
         <span
           key={`${prefix}-${i}`}
-          className={`unit-tag ${getTone(part)}`}
+          className={`unit-tag ${getTone(part)} rotating-badge`}
+          onClick={handleClick}
           style={{ display: items.length > 1 ? (i === idx ? 'inline-flex' : 'none') : 'inline-flex' }}
+          role={items.length > 1 ? 'button' : undefined}
         >
           {part}
         </span>

@@ -1397,6 +1397,10 @@ button.ghost::before {
   align-items: center;
 }
 
+.rotating-badge {
+  cursor: pointer;
+}
+
 .badge-group {
   display: inline-flex;
   gap: 6px;
