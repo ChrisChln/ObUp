@@ -812,12 +812,10 @@ function App() {
   const [isFiltering, setIsFiltering] = useState(false)
 
   useEffect(() => {
-    // 显示过滤 loading 状态，等防抖结束再隐藏并平滑滚动到明细区顶部
+    // 显示过滤 loading 状态，等防抖结束再隐藏（不自动滚动）
     setIsFiltering(true)
     const id = setTimeout(() => {
       setIsFiltering(false)
-      const el = document.getElementById('detailSection')
-      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }, 260)
     return () => clearTimeout(id)
   }, [debouncedDetailSearch, detailStageFilter, teamFilter, detailOnlyAbnormal])
