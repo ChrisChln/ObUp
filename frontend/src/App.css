@@ -191,12 +191,17 @@
   transform: translateY(-50%);
 }
 .topnav__datebtn {
-  border-radius: 12px;
-  border: 1px solid rgba(18,19,21,0.12);
-  background: #fff;
-  padding: 6px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(18, 19, 21, 0.12);
+  background: #f2f2f2;
+  padding: 8px 14px;
   font-weight: 600;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 6px 14px rgba(18, 19, 21, 0.12);
+  transition: transform 0.18s ease, box-shadow 0.2s ease, background 0.2s ease;
 }
 .topnav__datedrop {
   position: absolute;

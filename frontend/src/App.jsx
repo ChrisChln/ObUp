@@ -1573,7 +1573,11 @@ function App() {
         <div className="topnav__date" ref={dateBtnRef}>
           <button
             type="button"
-            className={`topnav__datebtn date-${getDateTone(selectedDate)}`}
+            className={
+              showDateDropdown
+                ? `topnav__datebtn date-${getDateTone(selectedDate)}`
+                : 'topnav__datebtn topnav__link'
+            }
             onClick={() => setShowDateDropdown((s) => !s)}
             aria-haspopup="dialog"
             aria-expanded={showDateDropdown}
