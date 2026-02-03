@@ -265,6 +265,14 @@
 .topnav__datebtn.date-success { background: rgba(34,197,94,0.12); }
 .topnav__datebtn.date-error { background: rgba(239,68,68,0.08); }
 
+/* hide default small square marker for topnav buttons that now have icons */
+.topnav__datebtn.topnav__link::before,
+.topnav__leaders::before,
+.topnav__detail::before,
+.topnav__settings::before {
+  display: none;
+}
+
 .topnav__detail:active {
   transform: translateY(0);
 }

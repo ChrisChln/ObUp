@@ -1817,11 +1817,11 @@ function App() {
                         onClick={() => handleUploadClick(item.key)}
                         disabled={!selectedDate || isUploading}
                       >
-                        {t('上传')}
+                        <Icon name="upload" /> <span style={{ marginLeft: 6 }}>{t('上传')}</span>
                       </button>
                       {view.tone !== 'waiting' && (
                         <button type="button" className="danger" onClick={() => handleDelete(item.key)}>
-                          {t('删除')}
+                          <Icon name="trash" /> <span style={{ marginLeft: 6 }}>{t('删除')}</span>
                         </button>
                       )}
                     </div>
@@ -2075,10 +2075,10 @@ function App() {
               onClick={() => setShowMatch(true)}
               disabled={!attendanceNames.length}
             >
-              {t('手动匹配')}
+              <Icon name="user" /> <span style={{ marginLeft: 8 }}>{t('手动匹配')}</span>
             </button>
-            <button type="button" className="ghost">{t('导出')}</button>
-            <button type="button" className="primary">{t('生成日报')}</button>
+            <button type="button" className="ghost"><Icon name="file" /> <span style={{ marginLeft: 8 }}>{t('导出')}</span></button>
+            <button type="button" className="primary"><Icon name="calendar" /> <span style={{ marginLeft: 8 }}>{t('生成日报')}</span></button>
           </div>
         </div>
           <div className="table">
