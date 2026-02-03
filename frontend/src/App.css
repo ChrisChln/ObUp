@@ -651,17 +651,16 @@
   margin-bottom: 12px;
   border-radius: 12px;
   overflow: hidden;
-  background: #fff;
-  border: 1px solid rgba(18,19,21,0.04);
-}
-.upload-banner {
+  /* 红色背景填满整个框 */
+  background: #ff3b30;
+  border: none;
   display: flex;
   justify-content: center;
   align-items: center;
   padding: 8px;
 }
 .upload-banner-img {
-  width: 100%;
+  width: 85%;
   max-width: 320px;
   height: auto;
   object-fit: contain;
