@@ -648,11 +648,11 @@
 
 /* banner above upload panel */
 .upload-banner {
-  margin-bottom: 12px;
+  margin-bottom: 0px;
   border-radius: 12px;
   overflow: hidden;
-  /* 红色背景填满整个框 */
-  background: #ff3b30;
+  /* 红色背景填满整个框 - 精确 RGB(255,44,19) */
+  background: rgb(255,44,19);
   border: none;
   display: flex;
   justify-content: center;
