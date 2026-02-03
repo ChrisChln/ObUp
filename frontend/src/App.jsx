@@ -664,6 +664,7 @@ function App() {
   const [detailSearch, setDetailSearch] = useState('')
   const [uploadState, setUploadState] = useState({})
   const [uploadStateByDate, setUploadStateByDate] = useState({})
+  const [showDateDropdown, setShowDateDropdown] = useState(false)
   const [sortingReport, setSortingReport] = useState(null)
   const [pickingReport, setPickingReport] = useState(null)
   const [packingReport, setPackingReport] = useState(null)
@@ -1539,6 +1540,32 @@ function App() {
             </a>
           ))}
         </nav>
+        <div className="topnav__date">
+          <button
+            type="button"
+            className="topnav__datebtn"
+            onClick={() => setShowDateDropdown((s) => !s)}
+          >
+            {selectedDateLabel || t('请选择日期')}
+          </button>
+          {showDateDropdown ? (
+            <div className="topnav__datedrop">
+              {dateList.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={item.key === selectedDate ? 'date-item active' : 'date-item'}
+                  onClick={() => {
+                    setSelectedDate(item.key)
+                    setShowDateDropdown(false)
+                  }}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
         <button
           type="button"
           className="topnav__leaders"
@@ -1691,33 +1718,14 @@ function App() {
           <div className="date-panel">
             <h3>{t('日期列表')}</h3>
             <div className="date-list">
-              {dateList.map((item) => {
-                const stateForDate = uploadStateByDate[item.key] || {}
-                const keys = uploads.map((u) => u.key)
-                // determine tone: waiting/partial/success/error
-                let tone = 'waiting'
-                if (stateForDate && Object.keys(stateForDate).length) {
-                  // if any error -> error
-                  const anyError = keys.some((k) => stateForDate[k]?.status === 'error')
-                  if (anyError) tone = 'error'
-                  else {
-                    const successCount = keys.filter((k) => stateForDate[k] && stateForDate[k].status && stateForDate[k].status !== 'waiting').length
-                    if (successCount === keys.length) tone = 'success'
-                    else if (successCount > 0) tone = 'partial'
-                    else tone = 'waiting'
-                  }
-                }
-                return (
-                  <button
-                    key={item.key}
-                    type="button"
-                    className={`${item.key === selectedDate ? 'date-item active' : 'date-item'} date-${tone}`}
-                    onClick={() => setSelectedDate(item.key)}
-                  >
-                    {item.label}
+              <div style={{ padding: 8 }}>
+                <small>日期列表已移至顶部菜单</small>
+                <div>
+                  <button type="button" className="topnav__datebtn" onClick={() => setShowDateDropdown(true)}>
+                    {selectedDateLabel || t('请选择日期')}
                   </button>
-                )
-              })}
+                </div>
+              </div>
             </div>
             <div className="date-picker">
               <label htmlFor="datePicker">{t('更早日期')}</label>

@@ -184,6 +184,44 @@
   transform: translateY(-1px);
 }
 
+.topnav__date {
+  position: relative;
+  margin-left: 12px;
+}
+.topnav__datebtn {
+  border-radius: 12px;
+  border: 1px solid rgba(18,19,21,0.12);
+  background: #fff;
+  padding: 6px 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.topnav__datedrop {
+  position: absolute;
+  right: 0;
+  top: 40px;
+  background: #fff;
+  border: 1px solid rgba(18,19,21,0.08);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+  z-index: 60;
+  width: 220px;
+}
+.topnav__datedrop .date-item {
+  width: 100%;
+  display: block;
+  text-align: left;
+  padding: 8px 10px;
+  background: transparent;
+  box-shadow: none;
+}
+.topnav__datedrop .date-item.active {
+  background: rgba(37,99,235,0.08);
+}
+
 .topnav__detail:active {
   transform: translateY(0);
 }
