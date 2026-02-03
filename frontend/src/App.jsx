@@ -2752,8 +2752,14 @@ const buildDetailRows = (
     const packingMulti = Number(row.packingMultiUnits || 0)
     const sorting = Number(row.sortingUnits || 0)
     const score = picking * 1.0 + packingSingle * 0.8 + packingMulti * 0.5 + sorting * 0.3
-    // 保留两位小数
-    row.compositeScore = Math.round(score * 100) / 100
+    // 使用考勤系统的总工时（attendanceHours）归一化：综合分 = 总分 / attendanceHours
+    // 若无考勤或工时为 0，则显示为 null（页面会渲染为 --）
+    const attendanceHours = Number(row.attendanceHours || 0)
+    if (attendanceHours > 0) {
+      row.compositeScore = Math.round((score / attendanceHours) * 100) / 100
+    } else {
+      row.compositeScore = null
+    }
   })
 
   return Array.from(rows.values())
