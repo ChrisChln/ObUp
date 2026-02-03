@@ -185,8 +185,10 @@
 }
 
 .topnav__date {
-  position: relative;
-  margin-left: 12px;
+  position: absolute;
+  right: 160px;
+  top: 50%;
+  transform: translateY(-50%);
 }
 .topnav__datebtn {
   border-radius: 12px;
@@ -221,6 +223,10 @@
 .topnav__datedrop .date-item.active {
   background: rgba(37,99,235,0.08);
 }
+.topnav__datebtn.date-waiting { background: #f3f4f6; color:#6b7280; }
+.topnav__datebtn.date-partial { background: rgba(250,204,21,0.14); }
+.topnav__datebtn.date-success { background: rgba(34,197,94,0.12); }
+.topnav__datebtn.date-error { background: rgba(239,68,68,0.08); }
 
 .topnav__detail:active {
   transform: translateY(0);

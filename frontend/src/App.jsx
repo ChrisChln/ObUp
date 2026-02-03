@@ -665,6 +665,7 @@ function App() {
   const [uploadState, setUploadState] = useState({})
   const [uploadStateByDate, setUploadStateByDate] = useState({})
   const [showDateDropdown, setShowDateDropdown] = useState(false)
+  const dateBtnRef = useRef(null)
   const [sortingReport, setSortingReport] = useState(null)
   const [pickingReport, setPickingReport] = useState(null)
   const [packingReport, setPackingReport] = useState(null)
@@ -1055,6 +1056,35 @@ function App() {
       }
     })
   }, [dateList])
+
+  const getDateTone = (dateKey) => {
+    if (!dateKey) return 'waiting'
+    const stateForDate = uploadStateByDate[dateKey] || {}
+    const keys = uploads.map((u) => u.key)
+    let tone = 'waiting'
+    if (stateForDate && Object.keys(stateForDate).length) {
+      const anyError = keys.some((k) => stateForDate[k]?.status === 'error')
+      if (anyError) tone = 'error'
+      else {
+        const successCount = keys.filter((k) => stateForDate[k] && stateForDate[k].status && stateForDate[k].status !== 'waiting').length
+        if (successCount === keys.length) tone = 'success'
+        else if (successCount > 0) tone = 'partial'
+        else tone = 'waiting'
+      }
+    }
+    return tone
+  }
+
+  // close dropdown on outside click
+  useEffect(() => {
+    if (!showDateDropdown) return undefined
+    const onDocClick = (e) => {
+      if (!dateBtnRef.current) return
+      if (!dateBtnRef.current.contains(e.target)) setShowDateDropdown(false)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [showDateDropdown])
 
   const fetchAttendanceReport = async (dateKey) => {
     if (!dateKey) return
@@ -1540,29 +1570,44 @@ function App() {
             </a>
           ))}
         </nav>
-        <div className="topnav__date">
+        <div className="topnav__date" ref={dateBtnRef}>
           <button
             type="button"
-            className="topnav__datebtn"
+            className={`topnav__datebtn date-${getDateTone(selectedDate)}`}
             onClick={() => setShowDateDropdown((s) => !s)}
+            aria-haspopup="dialog"
+            aria-expanded={showDateDropdown}
           >
             {selectedDateLabel || t('请选择日期')}
           </button>
           {showDateDropdown ? (
-            <div className="topnav__datedrop">
-              {dateList.map((item) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  className={item.key === selectedDate ? 'date-item active' : 'date-item'}
-                  onClick={() => {
-                    setSelectedDate(item.key)
+            <div className="topnav__datedrop" role="dialog" aria-label="日期选择">
+              <div className="topnav__datedrop-list">
+                {dateList.map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    className={`${item.key === selectedDate ? 'date-item active' : 'date-item'} ${'date-' + getDateTone(item.key)}`}
+                    onClick={() => {
+                      setSelectedDate(item.key)
+                      setShowDateDropdown(false)
+                    }}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ paddingTop: 8, borderTop: '1px solid rgba(18,19,21,0.04)' }}>
+                <input
+                  type="date"
+                  value={selectedDate}
+                  max={toDateKey(new Date())}
+                  onChange={(e) => {
+                    setSelectedDate(e.target.value)
                     setShowDateDropdown(false)
                   }}
-                >
-                  {item.label}
-                </button>
-              ))}
+                />
+              </div>
             </div>
           ) : null}
         </div>
