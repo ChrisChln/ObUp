@@ -221,6 +221,7 @@ const TRANSLATIONS = {
     '白名单': 'Whitelist',
     '设置': 'Settings',
     '人员': 'Name',
+    '名字': 'Name',
     '件数': 'Units',
     '综合分': 'Composite score',
     '耗时': 'Hours',
@@ -2034,7 +2035,7 @@ function App() {
         </div>
           <div className="table">
             <div className="table-row table-head">
-              <span>{t('人员')}</span>
+              <span>{t('名字')}</span>
               <span>{t('开始工作')}</span>
               <span>{t('有效工时')}</span>
               <span>{t('工时')}</span>
@@ -2043,7 +2044,6 @@ function App() {
               <span>{t('综合分')}</span>
               <span>{t('时效')}</span>
               <span>{t('工作时间占比')}</span>
-              <span>{t('状态')}</span>
             </div>
           {detailRows.length ? (
             filteredDetailRows.map((person) => {
@@ -2060,8 +2060,8 @@ function App() {
                 } else if (detailStageFilter === 'sorting') {
                   unitParts.push(`分拨:${person.sortingUnits}`)
                 } else if (detailStageFilter === 'packing') {
-                  unitParts.push(`单品:${person.packingSingleUnits}`)
-                  unitParts.push(`多品:${person.packingMultiUnits}`)
+                  if (person.packingSingleUnits) unitParts.push(`单品:${person.packingSingleUnits}`)
+                  if (person.packingMultiUnits) unitParts.push(`多品:${person.packingMultiUnits}`)
                 } else {
                   if (person.pickingUnits) unitParts.push(`拣货:${person.pickingUnits}`)
                   if (person.sortingUnits) unitParts.push(`分拨:${person.sortingUnits}`)
@@ -2100,8 +2100,8 @@ function App() {
                     person.packingMultiEwhHours > 0
                       ? person.packingMultiUnits / person.packingMultiEwhHours
                       : null
-                  effParts.push(`单品:${singleEff === null ? '--' : singleEff.toFixed(1)}`)
-                  effParts.push(`多品:${multiEff === null ? '--' : multiEff.toFixed(1)}`)
+                  if (person.packingSingleUnits) effParts.push(`单品:${singleEff === null ? '--' : singleEff.toFixed(1)}`)
+                  if (person.packingMultiUnits) effParts.push(`多品:${multiEff === null ? '--' : multiEff.toFixed(1)}`)
                 } else {
                   const pickEff =
                     person.pickingEwhHours > 0 ? person.pickingUnits / person.pickingEwhHours : null
