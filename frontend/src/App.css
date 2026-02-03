@@ -755,6 +755,27 @@
   }
 }
 
+.filter-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(18, 19, 21, 0.12);
+  border-top-color: rgba(18, 19, 21, 0.4);
+  animation: spin 0.8s linear infinite;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .upload-footer button {
   border-radius: 12px;
   border: 1px solid rgba(18, 19, 21, 0.12);
@@ -1361,10 +1382,11 @@ button.ghost::before {
 }
 
 .badge-group {
-  display: inline-flex;
-  gap: 6px;
-  flex-wrap: wrap;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   align-items: center;
+  justify-content: center;
 }
 
 .unit-tag {

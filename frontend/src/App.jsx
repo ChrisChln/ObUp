@@ -1,5 +1,14 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
+// 简单防抖 Hook
+function useDebouncedValue(value, delay = 250) {
+  const [debounced, setDebounced] = useState(value)
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(value), delay)
+    return () => clearTimeout(id)
+  }, [value, delay])
+  return debounced
+}
 
 const uploads = [
   {
@@ -572,10 +581,6 @@ function App() {
   const [teamFilter, setTeamFilter] = useState('all')
   const [detailOnlyAbnormal, setDetailOnlyAbnormal] = useState(false)
   const [detailSearch, setDetailSearch] = useState('')
-  const [debouncedDetailSearch, setDebouncedDetailSearch] = useState(detailSearch)
-  const [debouncedDetailStageFilter, setDebouncedDetailStageFilter] = useState(detailStageFilter)
-  const [debouncedTeamFilter, setDebouncedTeamFilter] = useState(teamFilter)
-  const [isFiltering, setIsFiltering] = useState(false)
   const [uploadState, setUploadState] = useState({})
   const [sortingReport, setSortingReport] = useState(null)
   const [pickingReport, setPickingReport] = useState(null)
@@ -630,11 +635,11 @@ function App() {
   }, [lang])
   const combinedReport = buildCombinedReport(pickingReport, sortingReport, packingReport)
   const reportForDetails =
-    debouncedDetailStageFilter === 'picking'
+    detailStageFilter === 'picking'
       ? pickingReport
-      : debouncedDetailStageFilter === 'sorting'
+      : detailStageFilter === 'sorting'
         ? sortingReport
-        : debouncedDetailStageFilter === 'packing'
+        : detailStageFilter === 'packing'
           ? packingReport
           : combinedReport
   const stageLabelKey =
@@ -720,36 +725,20 @@ function App() {
     () => Array.from(new Set(detailRows.flatMap((row) => Array.from(row.groups)))),
     [detailRows]
   )
-  // debounced normalized search to avoid frequent recompute
-  useEffect(() => {
-    setIsFiltering(true)
-    const id = setTimeout(() => {
-      setDebouncedDetailSearch(detailSearch)
-      setIsFiltering(false)
-      // smooth scroll to top of detail section after filtering applied
-      document.getElementById('detailSection')?.scrollIntoView({ behavior: 'smooth' })
-    }, 250)
-    return () => clearTimeout(id)
-  }, [detailSearch])
-  useEffect(() => {
-    setIsFiltering(true)
-    const id = setTimeout(() => {
-      setDebouncedDetailStageFilter(detailStageFilter)
-      setIsFiltering(false)
-      document.getElementById('detailSection')?.scrollIntoView({ behavior: 'smooth' })
-    }, 200)
-    return () => clearTimeout(id)
-  }, [detailStageFilter])
-  useEffect(() => {
-    setIsFiltering(true)
-    const id = setTimeout(() => {
-      setDebouncedTeamFilter(teamFilter)
-      setIsFiltering(false)
-      document.getElementById('detailSection')?.scrollIntoView({ behavior: 'smooth' })
-    }, 200)
-    return () => clearTimeout(id)
-  }, [teamFilter])
+  const debouncedDetailSearch = useDebouncedValue(detailSearch, 250)
   const detailSearchNormalized = useMemo(() => normalizeName(debouncedDetailSearch), [debouncedDetailSearch])
+  const [isFiltering, setIsFiltering] = useState(false)
+
+  useEffect(() => {
+    // 显示过滤 loading 状态，等防抖结束再隐藏并平滑滚动到明细区顶部
+    setIsFiltering(true)
+    const id = setTimeout(() => {
+      setIsFiltering(false)
+      const el = document.getElementById('detailSection')
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 260)
+    return () => clearTimeout(id)
+  }, [debouncedDetailSearch, detailStageFilter, teamFilter, detailOnlyAbnormal])
   const whitelistRoleMap = useMemo(() => {
     const map = new Map()
     whitelist.forEach((entry) => {
@@ -890,26 +879,17 @@ function App() {
           const ratioIssue = !exempt && ratio !== null && (ratio < 75 || ratio > 100)
           if (!(forcedIssue || matchIssue || ratioIssue)) return false
         }
-        if (debouncedDetailStageFilter === 'picking' && !person.hasPicked) return false
-        if (debouncedDetailStageFilter === 'sorting' && !person.hasSorted) return false
-        if (debouncedDetailStageFilter === 'packing' && !person.hasPacked) return false
-        if (debouncedTeamFilter !== 'all' && !person.groups.has(debouncedTeamFilter)) return false
+        if (detailStageFilter === 'picking' && !(person.groups.has('拣货') || person.hasPicked)) return false
+        if (detailStageFilter === 'sorting' && !(person.groups.has('分拨') || person.hasSorted)) return false
+        if (detailStageFilter === 'packing' && !(person.groups.has('打包') || person.hasPacked)) return false
+        if (teamFilter !== 'all' && !person.groups.has(teamFilter)) return false
         if (detailSearchNormalized) {
           const nameKey = normalizeName(person.name)
           if (!nameKey.includes(detailSearchNormalized)) return false
         }
         return true
       }),
-      [
-        detailRows,
-        detailOnlyAbnormal,
-        attendanceNameSet,
-        whitelistRoleMap,
-        hasAttendanceData,
-        debouncedDetailStageFilter,
-        debouncedTeamFilter,
-        detailSearchNormalized,
-      ]
+    [detailRows, detailOnlyAbnormal, attendanceNameSet, whitelistRoleMap, hasAttendanceData, detailStageFilter, teamFilter, detailSearchNormalized]
   )
 
   const fetchUploadState = async (dateKey) => {
@@ -1859,10 +1839,7 @@ function App() {
 
       <section className="table-section" id="detailSection">
         <div className="table-header">
-          <h2>
-            {t('人员明细')}
-            {isFiltering ? <span style={{ marginLeft: 12, fontSize: 12, color: '#888' }}>{t('筛选中...')}</span> : null}
-          </h2>
+          <h2>{t('人员明细')}</h2>
           <div className="table-actions">
             <div className="detail-filters">
               <input
@@ -1872,6 +1849,7 @@ function App() {
                 onChange={(event) => setDetailSearch(event.target.value)}
                 placeholder={t('搜索人员')}
               />
+              {isFiltering ? <span className="filter-spinner" aria-hidden /> : null}
               <button
                 type="button"
                 className={detailStageFilter === 'all' ? 'chip active' : 'chip'}
@@ -2676,7 +2654,7 @@ const buildDetailRows = (
         packingMultiEwhHours: 0,
         // 综合分（前端按规则计算并缓存，非持久化）
         compositeScore: 0,
-        // 预计算参与标记，加速过滤判断
+        // 预计算参与标记，避免运行时重复计算
         hasPicked: false,
         hasSorted: false,
         hasPacked: false,
@@ -2703,11 +2681,11 @@ const buildDetailRows = (
     row.packingSingleEwhHours += work.packingSingleEwhHours
     row.packingMultiEwhHours += work.packingMultiEwhHours
     row.ewhHours += work.ewhHours
-    // 更新参与标记
-    if (work.pickingUnits && work.pickingUnits > 0) row.hasPicked = true
-    if (work.sortingUnits && work.sortingUnits > 0) row.hasSorted = true
-    if ((work.packingSingleUnits && work.packingSingleUnits > 0) || (work.packingMultiUnits && work.packingMultiUnits > 0)) row.hasPacked = true
     linkedWork.add(operator)
+    // 预计算是否参与过各工种（用于快速过滤）
+    if (work.pickingUnits && work.pickingUnits > 0) row.hasPicked = true
+    if ((work.packingSingleUnits && work.packingSingleUnits > 0) || (work.packingMultiUnits && work.packingMultiUnits > 0)) row.hasPacked = true
+    if (work.sortingUnits && work.sortingUnits > 0) row.hasSorted = true
   }
 
   if (attendanceReport?.stats?.length) {
@@ -2790,11 +2768,6 @@ const buildDetailRows = (
 
   // 计算并缓存前端的“综合分”：拣货 1.0、单品打包 0.8、多品打包 0.5、分拨 0.3
   rows.forEach((row) => {
-    // 确保参与标记包含 groups 情况
-    row.hasPicked = row.hasPicked || row.groups.has('拣货')
-    row.hasSorted = row.hasSorted || row.groups.has('分拨')
-    row.hasPacked = row.hasPacked || row.groups.has('打包')
-
     const picking = Number(row.pickingUnits || 0)
     const packingSingle = Number(row.packingSingleUnits || 0)
     const packingMulti = Number(row.packingMultiUnits || 0)
