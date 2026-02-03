@@ -133,6 +133,7 @@ const TRANSLATIONS = {
     '设置': 'Settings',
     '人员': 'Name',
     '件数': 'Units',
+    '综合分': 'Composite score',
     '耗时': 'Hours',
     '时效': 'UPH',
     '全天时效': 'Day UPH',
@@ -1904,6 +1905,7 @@ function App() {
               <span>{t('工时')}</span>
               <span>{t('加班')}</span>
               <span>{t('件数')}</span>
+              <span>{t('综合分')}</span>
               <span>{t('时效')}</span>
               <span>{t('工作时间占比')}</span>
               <span>{t('状态')}</span>
@@ -2103,6 +2105,9 @@ function App() {
                           )
                         })
                       )}
+                    </span>
+                    <span>
+                      {typeof person.compositeScore === 'number' ? person.compositeScore.toFixed(2) : '--'}
                     </span>
                     <span className="badge-group">
                       {effLabel === '--' ? (
@@ -2634,6 +2639,8 @@ const buildDetailRows = (
         packingMultiUnits: 0,
         packingSingleEwhHours: 0,
         packingMultiEwhHours: 0,
+        // 综合分（前端按规则计算并缓存，非持久化）
+        compositeScore: 0,
         sources: new Set(),
         workKey: '',
       })
@@ -2737,6 +2744,17 @@ const buildDetailRows = (
       row.shiftType = amMinutes >= pmMinutes ? '早班' : '晚班'
     })
   }
+
+  // 计算并缓存前端的“综合分”：拣货 1.0、单品打包 0.8、多品打包 0.5、分拨 0.3
+  rows.forEach((row) => {
+    const picking = Number(row.pickingUnits || 0)
+    const packingSingle = Number(row.packingSingleUnits || 0)
+    const packingMulti = Number(row.packingMultiUnits || 0)
+    const sorting = Number(row.sortingUnits || 0)
+    const score = picking * 1.0 + packingSingle * 0.8 + packingMulti * 0.5 + sorting * 0.3
+    // 保留两位小数
+    row.compositeScore = Math.round(score * 100) / 100
+  })
 
   return Array.from(rows.values())
 }
