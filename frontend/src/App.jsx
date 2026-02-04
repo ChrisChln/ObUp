@@ -2069,14 +2069,7 @@ function App() {
                 ))}
               </select>
             </div>
-            <button
-              type="button"
-              className="ghost"
-              onClick={() => setShowMatch(true)}
-              disabled={!attendanceNames.length}
-            >
-              <Icon name="user" /> <span style={{ marginLeft: 8 }}>{t('手动匹配')}</span>
-            </button>
+            {/* 手动匹配按钮已移除 */}
             <button type="button" className="ghost"><Icon name="file" /> <span style={{ marginLeft: 8 }}>{t('导出')}</span></button>
             <button type="button" className="primary"><Icon name="calendar" /> <span style={{ marginLeft: 8 }}>{t('生成日报')}</span></button>
           </div>

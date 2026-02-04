@@ -929,6 +929,11 @@
   background: rgba(18, 19, 21, 0.4);
 }
 
+/* remove small square before upload/footer buttons */
+.upload-footer button::before {
+  display: none;
+}
+
 .upload-footer button.danger {
   background: rgba(239, 68, 68, 0.12);
   border-color: rgba(239, 68, 68, 0.35);
