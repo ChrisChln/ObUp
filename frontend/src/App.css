@@ -116,6 +116,11 @@
   background: rgba(18, 19, 21, 0.4);
 }
 
+/* hide small square marker before topnav links (we use icons) */
+.topnav__link::before {
+  display: none;
+}
+
 .topnav__link:hover {
   background: #ffffff;
   box-shadow: 0 10px 24px rgba(18, 19, 21, 0.16);
