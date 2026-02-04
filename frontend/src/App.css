@@ -692,6 +692,28 @@
   display: block;
 }
 
+.upload-banner-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.banner-left,
+.banner-right {
+  position: absolute;
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 20px;
+  text-shadow: 0 2px 6px rgba(0,0,0,0.35);
+}
+.banner-left {
+  left: 32px;
+  bottom: 32px;
+}
+.banner-right {
+  right: 32px;
+  top: 32px;
+}
+
 .date-panel h3,
 .upload-panel h3 {
   margin: 0 0 12px;

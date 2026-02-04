@@ -1847,6 +1847,10 @@ function App() {
               alt="banner"
               className="upload-banner-img"
             />
+            <div className="upload-banner-overlay" aria-hidden="true">
+              <div className="banner-left">战斗战斗</div>
+              <div className="banner-right">结果第一</div>
+            </div>
           </div>
         </div>
       </header>
