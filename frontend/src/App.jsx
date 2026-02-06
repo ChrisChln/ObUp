@@ -238,7 +238,6 @@ const TRANSLATIONS = {
     '耗时（高→低）': 'Hours (desc)',
     '时效（高→低）': 'UPH (desc)',
     '全天时效（高→低）': 'Day UPH (desc)',
-    '人员明细': 'Details',
     '开始工作': 'Start',
     '有效工时': 'EWH',
     '工时': 'Hours',
@@ -264,9 +263,6 @@ const TRANSLATIONS = {
     '全部': 'All',
     '非作业': 'Idle',
     '员工': 'Employee',
-    '拣货': 'Picking',
-    '分拨': 'Sorting',
-    '打包': 'Packing',
     '其他': 'Other',
     '语言': 'Language',
     '中文': 'Chinese',
@@ -294,6 +290,9 @@ const TRANSLATIONS = {
     '尾程': 'Last-mile',
     '确定': 'OK',
     '无': 'None',
+    '排序': 'Sort',
+    '升序': 'Asc',
+    '降序': 'Desc',
   },
 }
 
@@ -668,6 +667,8 @@ function App() {
   const [teamFilter, setTeamFilter] = useState('all')
   const [detailOnlyAbnormal, setDetailOnlyAbnormal] = useState(false)
   const [detailSearch, setDetailSearch] = useState('')
+  const [detailSortKey, setDetailSortKey] = useState('score')
+  const [detailSortDir, setDetailSortDir] = useState('desc')
   const [uploadState, setUploadState] = useState({})
   const [uploadStateByDate, setUploadStateByDate] = useState({})
   const [showDateDropdown, setShowDateDropdown] = useState(false)
@@ -982,6 +983,117 @@ function App() {
       }),
     [detailRows, detailOnlyAbnormal, attendanceNameSet, whitelistRoleMap, hasAttendanceData, detailStageFilter, teamFilter, detailSearchNormalized]
   )
+
+  const sortedDetailRows = useMemo(() => {
+    const rows = filteredDetailRows.slice()
+    const dir = detailSortDir === 'asc' ? 1 : -1
+
+    const startMap =
+      detailStageFilter === 'picking'
+        ? startTimeMaps.picking
+        : detailStageFilter === 'sorting'
+          ? startTimeMaps.sorting
+          : detailStageFilter === 'packing'
+            ? startTimeMaps.packing
+            : startTimeMaps.all
+
+    const getStartMs = (person) => {
+      const startKey = person.attendanceName
+        ? normalizeName(person.attendanceName)
+        : person.workKey
+          ? person.workKey
+          : person.sources && person.sources.size
+            ? normalizeWorkKey(Array.from(person.sources)[0])
+            : normalizeName(person.name)
+      const ms = startMap.get(startKey)
+      return Number.isFinite(ms) ? ms : null
+    }
+
+    const getUnits = (person) => {
+      if (detailStageFilter === 'picking') return Number(person.pickingUnits || 0)
+      if (detailStageFilter === 'sorting') return Number(person.sortingUnits || 0)
+      if (detailStageFilter === 'packing')
+        return Number(person.packingSingleUnits || 0) + Number(person.packingMultiUnits || 0)
+      return (
+        Number(person.pickingUnits || 0) +
+        Number(person.sortingUnits || 0) +
+        Number(person.packingSingleUnits || 0) +
+        Number(person.packingMultiUnits || 0)
+      )
+    }
+
+    const getEwh = (person) => {
+      if (detailStageFilter === 'picking') return Number(person.pickingEwhHours || 0)
+      if (detailStageFilter === 'sorting') return Number(person.sortingEwhHours || 0)
+      if (detailStageFilter === 'packing')
+        return (
+          Number(person.packingSingleEwhHours || 0) + Number(person.packingMultiEwhHours || 0)
+        )
+      return Number(person.ewhHours || 0)
+    }
+
+    const getEff = (person) => {
+      const units = getUnits(person)
+      const ewh = getEwh(person)
+      return ewh > 0 ? units / ewh : null
+    }
+
+    const getRatio = (person) =>
+      person.attendanceHours > 0
+        ? (Number(person.ewhHours || 0) / Number(person.attendanceHours || 0)) * 100
+        : null
+
+    const getOvertime = (person) => {
+      const h = Number(person.attendanceHours || 0)
+      if (!h) return null
+      return h > 8 ? h - 8 : 0
+    }
+
+    const getVal = (person) => {
+      switch (detailSortKey) {
+        case 'name':
+          return person.name || ''
+        case 'start':
+          return getStartMs(person)
+        case 'ewh':
+          return Number(person.ewhHours || 0)
+        case 'hours':
+          return Number(person.attendanceHours || 0)
+        case 'ot':
+          return getOvertime(person)
+        case 'units':
+          return getUnits(person)
+        case 'score':
+          return typeof person.compositeScore === 'number' ? person.compositeScore : null
+        case 'eff':
+          return getEff(person)
+        case 'ratio':
+          return getRatio(person)
+        default:
+          return null
+      }
+    }
+
+    rows.sort((a, b) => {
+      const av = getVal(a)
+      const bv = getVal(b)
+
+      if (detailSortKey === 'name') {
+        return String(av).localeCompare(String(bv), locale, { sensitivity: 'base' }) * dir
+      }
+
+      const an = av == null ? Number.NEGATIVE_INFINITY : Number(av)
+      const bn = bv == null ? Number.NEGATIVE_INFINITY : Number(bv)
+      if (an === bn) {
+        return String(a.name || '').localeCompare(String(b.name || ''), locale, {
+          sensitivity: 'base',
+        })
+      }
+      return (an - bn) * dir
+    })
+
+    return rows
+  }, [filteredDetailRows, detailSortKey, detailSortDir, detailStageFilter, startTimeMaps, locale])
 
   const fetchUploadState = async (dateKey) => {
     if (!dateKey) return
@@ -1475,6 +1587,211 @@ function App() {
         ).catch(() => null)
       )
     )
+  }
+
+  const exportDetailExcel = async () => {
+    const rows = sortedDetailRows
+    if (!rows.length) {
+      alert(t('暂无数据'))
+      return
+    }
+
+    const startMap =
+      detailStageFilter === 'picking'
+        ? startTimeMaps.picking
+        : detailStageFilter === 'sorting'
+          ? startTimeMaps.sorting
+          : detailStageFilter === 'packing'
+            ? startTimeMaps.packing
+            : startTimeMaps.all
+
+    const toStartLabel = (person) => {
+      const startKey = person.attendanceName
+        ? normalizeName(person.attendanceName)
+        : person.workKey
+          ? person.workKey
+          : person.sources && person.sources.size
+            ? normalizeWorkKey(Array.from(person.sources)[0])
+            : normalizeName(person.name)
+      const startMs = startMap.get(startKey)
+      return Number.isFinite(startMs)
+        ? new Date(startMs).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
+        : ''
+    }
+
+    const getUnitsForStage = (person) => {
+      if (detailStageFilter === 'picking') return Number(person.pickingUnits || 0)
+      if (detailStageFilter === 'sorting') return Number(person.sortingUnits || 0)
+      if (detailStageFilter === 'packing')
+        return Number(person.packingSingleUnits || 0) + Number(person.packingMultiUnits || 0)
+      return (
+        Number(person.pickingUnits || 0) +
+        Number(person.sortingUnits || 0) +
+        Number(person.packingSingleUnits || 0) +
+        Number(person.packingMultiUnits || 0)
+      )
+    }
+
+    const getEwhForStage = (person) => {
+      if (detailStageFilter === 'picking') return Number(person.pickingEwhHours || 0)
+      if (detailStageFilter === 'sorting') return Number(person.sortingEwhHours || 0)
+      if (detailStageFilter === 'packing')
+        return (
+          Number(person.packingSingleEwhHours || 0) + Number(person.packingMultiEwhHours || 0)
+        )
+      return Number(person.ewhHours || 0)
+    }
+
+    const getUnitsDetail = (person) => {
+      const parts = []
+      if (detailStageFilter === 'picking') parts.push(`${t('拣货')}:${person.pickingUnits || 0}`)
+      else if (detailStageFilter === 'sorting') parts.push(`${t('分拨')}:${person.sortingUnits || 0}`)
+      else if (detailStageFilter === 'packing') {
+        parts.push(`${t('单品')}:${person.packingSingleUnits || 0}`)
+        parts.push(`${t('多品')}:${person.packingMultiUnits || 0}`)
+      } else {
+        if (person.pickingUnits) parts.push(`${t('拣货')}:${person.pickingUnits}`)
+        if (person.sortingUnits) parts.push(`${t('分拨')}:${person.sortingUnits}`)
+        if (person.packingSingleUnits) parts.push(`${t('单品')}:${person.packingSingleUnits}`)
+        if (person.packingMultiUnits) parts.push(`${t('多品')}:${person.packingMultiUnits}`)
+      }
+      return parts.join('  ')
+    }
+
+    const getEffDetail = (person) => {
+      const parts = []
+      const pushEff = (label, units, ewh) => {
+        const eff = ewh > 0 ? units / ewh : null
+        if (eff == null) return
+        parts.push(`${label}:${eff.toFixed(1)}`)
+      }
+      if (detailStageFilter === 'picking') {
+        pushEff(t('拣货'), Number(person.pickingUnits || 0), Number(person.pickingEwhHours || 0))
+      } else if (detailStageFilter === 'sorting') {
+        pushEff(t('分拨'), Number(person.sortingUnits || 0), Number(person.sortingEwhHours || 0))
+      } else if (detailStageFilter === 'packing') {
+        pushEff(t('单品'), Number(person.packingSingleUnits || 0), Number(person.packingSingleEwhHours || 0))
+        pushEff(t('多品'), Number(person.packingMultiUnits || 0), Number(person.packingMultiEwhHours || 0))
+      } else {
+        if (person.pickingUnits || person.pickingEwhHours) {
+          pushEff(t('拣货'), Number(person.pickingUnits || 0), Number(person.pickingEwhHours || 0))
+        }
+        if (person.sortingUnits || person.sortingEwhHours) {
+          pushEff(t('分拨'), Number(person.sortingUnits || 0), Number(person.sortingEwhHours || 0))
+        }
+        if (person.packingSingleUnits || person.packingSingleEwhHours) {
+          pushEff(t('单品'), Number(person.packingSingleUnits || 0), Number(person.packingSingleEwhHours || 0))
+        }
+        if (person.packingMultiUnits || person.packingMultiEwhHours) {
+          pushEff(t('多品'), Number(person.packingMultiUnits || 0), Number(person.packingMultiEwhHours || 0))
+        }
+      }
+      return parts.join('  ')
+    }
+
+    const hasAttendance = (attendanceReport?.stats || []).length > 0
+
+    const computeStatus = (person) => {
+      const ratio =
+        person.attendanceHours > 0 ? (person.ewhHours / person.attendanceHours) * 100 : null
+      const whitelistRole = getWhitelistRole(person)
+      const whitelistExempt = isWhitelistExempt(whitelistRole)
+      const forcedIssue = whitelistRole === '异常'
+      const matchIssue =
+        !whitelistExempt &&
+        hasAttendance &&
+        (!person.attendanceMatched || person.attendanceHours <= 0)
+      const ratioIssue = !whitelistExempt && ratio !== null && (ratio < 75 || ratio > 100)
+      const waitingAttendance = !hasAttendance && person.ewhHours > 0
+      const matchedByManual = person.attendanceName && manualNameMap[person.attendanceName]
+      const hasIssue = forcedIssue || matchIssue || ratioIssue
+      const label = whitelistRole
+        ? t(whitelistRole)
+        : waitingAttendance
+          ? t('待上传')
+          : hasIssue
+            ? t('异常')
+            : matchedByManual
+              ? t('已匹配')
+              : t('正常')
+      return label
+    }
+
+    const headers = [
+      t('人员'),
+      t('开始工作'),
+      t('有效工时'),
+      t('工时'),
+      t('加班'),
+      t('件数'),
+      t('综合分'),
+      t('时效'),
+      t('工作时间占比'),
+      t('状态'),
+      `${t('件数')}(${t('明细') || '明细'})`,
+      `${t('时效')}(${t('明细') || '明细'})`,
+    ]
+
+    const aoa = [headers]
+    rows.forEach((person) => {
+      const start = toStartLabel(person)
+      const ewh = Number(person.ewhHours || 0)
+      const hours = Number(person.attendanceHours || 0)
+      const ot = hours > 8 ? hours - 8 : hours ? 0 : ''
+      const units = getUnitsForStage(person)
+      const stageEwh = getEwhForStage(person)
+      const eff = stageEwh > 0 ? units / stageEwh : ''
+      const ratio =
+        hours > 0 ? (Number(person.ewhHours || 0) / Number(person.attendanceHours || 0)) * 100 : ''
+      const status = computeStatus(person)
+      const score = typeof person.compositeScore === 'number' ? person.compositeScore : ''
+
+      aoa.push([
+        person.name || '',
+        start,
+        ewh ? Number(ewh.toFixed(2)) : '',
+        hours ? Number(hours.toFixed(2)) : '',
+        ot === '' ? '' : Number(Number(ot).toFixed(2)),
+        units ? units : 0,
+        score === '' ? '' : Number(Number(score).toFixed(2)),
+        eff === '' ? '' : Number(Number(eff).toFixed(2)),
+        ratio === '' ? '' : `${Number(ratio).toFixed(0)}%`,
+        status,
+        getUnitsDetail(person),
+        getEffDetail(person),
+      ])
+    })
+
+    const stageKey =
+      detailStageFilter === 'picking'
+        ? 'picking'
+        : detailStageFilter === 'sorting'
+          ? 'sorting'
+          : detailStageFilter === 'packing'
+            ? 'packing'
+            : 'all'
+    const filename = `人员明细_${selectedDate}_${stageKey}.xlsx`
+
+    try {
+      const XLSX = await import('xlsx')
+      const ws = XLSX.utils.aoa_to_sheet(aoa)
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, '人员明细')
+      const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' })
+      const blob = new Blob([buffer], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      alert(t('导出') + '失败')
+    }
   }
 
   const handleUploadClick = (key) => {
@@ -2072,9 +2389,47 @@ function App() {
                   </option>
                 ))}
               </select>
+              <select
+                className="team-select sort-select"
+                value={detailSortKey}
+                onChange={(event) => {
+                  const next = event.target.value
+                  setDetailSortKey(next)
+                  if (next === 'name' || next === 'start') {
+                    setDetailSortDir('asc')
+                  } else {
+                    setDetailSortDir('desc')
+                  }
+                }}
+              >
+                <option value="name">{t('名字')}</option>
+                <option value="start">{t('开始工作')}</option>
+                <option value="ewh">{t('有效工时')}</option>
+                <option value="hours">{t('工时')}</option>
+                <option value="ot">{t('加班')}</option>
+                <option value="units">{t('件数')}</option>
+                <option value="score">{t('综合分')}</option>
+                <option value="eff">{t('时效')}</option>
+                <option value="ratio">{t('工作时间占比')}</option>
+              </select>
+              <button
+                type="button"
+                className="chip chip-check"
+                onClick={() => setDetailSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
+                title={t('排序')}
+              >
+                {detailSortDir === 'asc' ? t('升序') : t('降序')}
+              </button>
             </div>
             {/* 手动匹配按钮已移除 */}
-            <button type="button" className="ghost"><Icon name="file" /> <span style={{ marginLeft: 8 }}>{t('导出')}</span></button>
+            <button
+              type="button"
+              className="ghost"
+              onClick={exportDetailExcel}
+              disabled={!sortedDetailRows.length}
+            >
+              <Icon name="file" /> <span style={{ marginLeft: 8 }}>{t('导出')}</span>
+            </button>
             <button type="button" className="primary"><Icon name="calendar" /> <span style={{ marginLeft: 8 }}>{t('生成日报')}</span></button>
           </div>
         </div>
@@ -2091,7 +2446,7 @@ function App() {
               <span>{t('工作时间占比')}</span>
             </div>
           {detailRows.length ? (
-            filteredDetailRows.map((person) => {
+            sortedDetailRows.map((person) => {
                 const ratio =
                   person.attendanceHours > 0 ? (person.ewhHours / person.attendanceHours) * 100 : null
                 const groupList = Array.from(person.groups)
