@@ -6,7 +6,8 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: true,
-    port: 6000,
+    // Chrome blocks 6000 as an unsafe port (X11). Use a safe port for LAN access.
+    port: 6080,
     strictPort: true,
     proxy: {
       '/api': 'http://localhost:3001',
