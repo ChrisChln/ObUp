@@ -30,6 +30,12 @@ const packingReports = new Map()
 const supabaseUrl = process.env.SUPABASE_URL
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null
+const punchSupabaseUrl = process.env.OBPUNCH_SUPABASE_URL
+const punchSupabaseKey = process.env.OBPUNCH_SUPABASE_SERVICE_ROLE_KEY
+const punchSupabase =
+  punchSupabaseUrl && punchSupabaseKey ? createClient(punchSupabaseUrl, punchSupabaseKey) : null
+
+const workTimezone = process.env.WORK_TIMEZONE || ''
 
 const ensureTypeMap = (type) => {
   if (!uploadsByType.has(type)) uploadsByType.set(type, new Map())
@@ -82,9 +88,24 @@ const pad2 = (value) => String(value).padStart(2, '0')
 const toDateKey = (date) =>
   `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
 
+const zonedTimeToUtc = (y, m, d, hh, mm, ss, tz) => {
+  const utcDate = new Date(Date.UTC(y, m - 1, d, hh, mm, ss))
+  const tzDate = new Date(utcDate.toLocaleString('en-US', { timeZone: tz }))
+  const offsetMs = tzDate.getTime() - utcDate.getTime()
+  return new Date(utcDate.getTime() - offsetMs)
+}
+
 const windowForWorkDate = (workDateStr) => {
   const [y, m, d] = workDateStr.split('-').map(Number)
-  const start = new Date(y, m - 1, d, 5, 0, 0, 0)
+  let start = null
+  if (workTimezone) {
+    try {
+      start = zonedTimeToUtc(y, m, d, 5, 0, 0, workTimezone)
+    } catch (error) {
+      console.warn('Invalid WORK_TIMEZONE, fallback to server time', error)
+    }
+  }
+  if (!start) start = new Date(y, m - 1, d, 5, 0, 0, 0)
   const end = new Date(start.getTime() + 24 * 60 * 60 * 1000)
   return { start, end }
 }
@@ -393,6 +414,156 @@ const computeEwhForEvents = (events, start, end, gapMs) => {
     if (diff <= gapMs) ewhMs += diff
   }
   return ewhMs / 3600000
+}
+
+const chunkArray = (list, size) => {
+  const chunks = []
+  for (let i = 0; i < list.length; i += size) chunks.push(list.slice(i, i + size))
+  return chunks
+}
+
+const mergeAttendanceSegments = (segments) => {
+  if (!segments.length) return []
+  const sorted = [...segments].sort((a, b) => a.start - b.start)
+  const merged = [sorted[0]]
+  for (let i = 1; i < sorted.length; i += 1) {
+    const last = merged[merged.length - 1]
+    const current = sorted[i]
+    if (current.start <= last.end) {
+      last.end = Math.max(last.end, current.end)
+    } else {
+      merged.push({ ...current })
+    }
+  }
+  return merged
+}
+
+const buildAttendanceReportFromPunches = async (dateKey) => {
+  if (!punchSupabase) return null
+  const { start, end } = windowForWorkDate(dateKey)
+  const windowStart = start.toISOString()
+  const windowEnd = end.toISOString()
+
+  const { data: punches, error } = await punchSupabase
+    .from('ob_punches')
+    .select('staff_id, action, created_at')
+    .gte('created_at', windowStart)
+    .lt('created_at', windowEnd)
+    .order('created_at', { ascending: true })
+
+  if (error) {
+    console.warn('Fetch ob_punches failed', error)
+    throw error
+  }
+
+  if (!punches || punches.length === 0) {
+    return { status: 'reject', errors: ['该日期无考勤记录'] }
+  }
+
+  const staffIds = Array.from(
+    new Set(punches.map((row) => String(row.staff_id || '').trim()).filter(Boolean))
+  )
+  const staffNameMap = new Map()
+  if (staffIds.length) {
+    const chunks = chunkArray(staffIds, 500)
+    for (const chunk of chunks) {
+      const { data: employees, error: empError } = await punchSupabase
+        .from('ob_employees')
+        .select('staff_id, name')
+        .in('staff_id', chunk)
+      if (empError) {
+        console.warn('Fetch ob_employees failed', empError)
+        continue
+      }
+      ;(employees || []).forEach((emp) => {
+        const key = String(emp.staff_id || '').trim()
+        if (key && !staffNameMap.has(key)) {
+          staffNameMap.set(key, String(emp.name || '').trim())
+        }
+      })
+    }
+  }
+
+  const byStaff = new Map()
+  punches.forEach((row) => {
+    const staffId = String(row.staff_id || '').trim()
+    if (!staffId) return
+    const action = String(row.action || '').trim().toUpperCase()
+    const ts = row.created_at ? new Date(row.created_at) : null
+    if (!ts || Number.isNaN(ts.getTime())) return
+    if (!byStaff.has(staffId)) byStaff.set(staffId, [])
+    byStaff.get(staffId).push({ action, ts })
+  })
+
+  const stats = []
+  const segments = {}
+  let totalHours = 0
+
+  byStaff.forEach((events, staffId) => {
+    if (!events.length) return
+    const sorted = [...events].sort((a, b) => a.ts - b.ts)
+    let openStart = null
+    const rawSegments = []
+
+    sorted.forEach((event) => {
+      if (event.action === 'IN') {
+        if (!openStart) openStart = event.ts
+        return
+      }
+      if (event.action === 'OUT') {
+        if (openStart && event.ts > openStart) {
+          rawSegments.push({ start: openStart, end: event.ts })
+        }
+        openStart = null
+      }
+    })
+
+    if (openStart && end > openStart) {
+      rawSegments.push({ start: openStart, end })
+    }
+
+    const merged = mergeAttendanceSegments(rawSegments)
+    if (!merged.length) return
+
+    const hours = merged.reduce((sum, seg) => sum + (seg.end - seg.start), 0) / 3600000
+    totalHours += hours
+
+    const name = staffNameMap.get(staffId) || staffId
+    stats.push({
+      operator: name,
+      totalUnits: 0,
+      ewhHours: hours,
+      uph: 0,
+    })
+
+    segments[name] = merged.map((seg) => ({
+      type: 'attendance',
+      start: seg.start.toISOString(),
+      end: seg.end.toISOString(),
+    }))
+  })
+
+  if (!stats.length) {
+    return { status: 'reject', errors: ['该日期无有效打卡记录'] }
+  }
+
+  return {
+    meta: {
+      stage: 'attendance',
+      workDate: dateKey,
+      windowStart,
+      windowEnd,
+      status: 'pass',
+      coverageRatio: 1,
+      totalCount: punches.length,
+      inWindowCount: punches.length,
+      warnings: [],
+      errors: [],
+    },
+    kpi: { employees: stats.length, totalUnitsAll: 0, totalEwhHoursAll: totalHours, avgUph: 0 },
+    stats,
+    segments,
+  }
 }
 
 const parsePackingFile = (filePath, dateKey) => {
@@ -1328,6 +1499,26 @@ app.get('/api/reports/attendance', async (req, res) => {
   if (!date) {
     res.status(400).json({ ok: false, message: 'date is required' })
     return
+  }
+
+  if (punchSupabase) {
+    try {
+      const report = await buildAttendanceReportFromPunches(date)
+      if (report?.meta) {
+        res.json({ ok: true, report })
+        return
+      }
+      if (report?.status === 'reject') {
+        res.status(422).json({ ok: false, message: 'attendance not found', errors: report.errors })
+        return
+      }
+      res.status(404).json({ ok: false, message: 'report not found' })
+      return
+    } catch (error) {
+      console.error('Attendance punch report error', error)
+      res.status(500).json({ ok: false, message: 'report load failed' })
+      return
+    }
   }
 
   if (supabase) {

@@ -110,7 +110,8 @@ const uploads = [
   {
     key: 'attendance',
     title: '考勤数据',
-    desc: '签到、请假与排班',
+    desc: '打卡流水自动拉取',
+    auto: true,
   },
 ]
 
@@ -375,7 +376,70 @@ const dayStart = 5 * 60
 const dayEnd = 29 * 60
 const daySpan = dayEnd - dayStart
 
-const buildTimelineRowsFromReport = (report) => {
+const mergeIntervals = (intervals) => {
+  if (!intervals.length) return []
+  const sorted = [...intervals].sort((a, b) => a.start - b.start)
+  const merged = [sorted[0]]
+  for (let i = 1; i < sorted.length; i += 1) {
+    const last = merged[merged.length - 1]
+    const current = sorted[i]
+    if (current.start <= last.end) {
+      last.end = Math.max(last.end, current.end)
+    } else {
+      merged.push({ ...current })
+    }
+  }
+  return merged
+}
+
+const buildAttendanceWindowMap = (attendanceReport, nameMap) => {
+  const map = new Map()
+  if (!attendanceReport?.segments) return map
+
+  const addSegments = (key, segs) => {
+    if (!key || !segs?.length) return
+    const list = map.get(key) || []
+    segs.forEach((seg) => {
+      if (seg?.start && seg?.end) list.push({ start: seg.start, end: seg.end })
+    })
+    map.set(key, list)
+  }
+
+  Object.entries(attendanceReport.segments).forEach(([operator, segs]) => {
+    const key = normalizeName(operator)
+    if (!key) return
+    const onlyAttendance = (segs || []).filter((seg) => seg.type === 'attendance')
+    addSegments(key, onlyAttendance)
+  })
+
+  Object.entries(nameMap || {}).forEach(([att, work]) => {
+    const attKey = normalizeName(att)
+    const workKey = normalizeWorkKey(work)
+    if (!attKey || !workKey) return
+    const segs = map.get(attKey)
+    if (!segs?.length) return
+    addSegments(workKey, segs)
+  })
+
+  map.forEach((list, key) => {
+    const merged = mergeIntervals(
+      list
+        .map((seg) => ({
+          start: new Date(seg.start).getTime(),
+          end: new Date(seg.end).getTime(),
+        }))
+        .filter((seg) => Number.isFinite(seg.start) && Number.isFinite(seg.end) && seg.end > seg.start)
+    )
+    map.set(
+      key,
+      merged.map((seg) => ({ start: seg.start, end: seg.end }))
+    )
+  })
+
+  return map
+}
+
+const buildTimelineRowsFromReport = (report, attendanceWindowMap) => {
   if (!report?.stats?.length) return []
   const base = new Date(report.meta.windowStart)
   const baseMs = base.getTime()
@@ -482,6 +546,53 @@ const buildTimelineRowsFromReport = (report) => {
       }
     })
     const merged = mergeSegments(segments, 15)
+    const key = normalizeWorkKey(stat.operator) || normalizeName(stat.operator)
+    const windowsRaw = key ? attendanceWindowMap?.get(key) : null
+    const windows = windowsRaw
+      ? mergeIntervals(
+          windowsRaw
+            .map((seg) => ({
+              start: dayStart + Math.max(0, Math.floor((seg.start - baseMs) / 60000)),
+              end: dayStart + Math.max(0, Math.ceil((seg.end - baseMs) / 60000)),
+            }))
+            .filter((seg) => seg.end > seg.start)
+        )
+      : []
+    const applyAttendanceWindows = (list) => {
+      if (!windows.length) return list
+      const output = []
+      list.forEach((seg) => {
+        if (seg.type !== 'idle') {
+          output.push(seg)
+          return
+        }
+        let cursor = seg.start
+        windows.forEach((win) => {
+          if (win.end <= cursor || win.start >= seg.end) return
+          const start = Math.max(cursor, win.start)
+          const end = Math.min(seg.end, win.end)
+          if (start > cursor) {
+            output.push({ ...seg, start: cursor, end: start })
+          }
+          if (end > start) {
+            output.push({
+              ...seg,
+              start,
+              end,
+              stage: 'attendance',
+              type: 'attendance-idle',
+              units: null,
+            })
+          }
+          cursor = end
+        })
+        if (cursor < seg.end) {
+          output.push({ ...seg, start: cursor, end: seg.end })
+        }
+      })
+      return output
+    }
+    const enriched = applyAttendanceWindows(merged)
     const unitsByStage = {
       picking:
         stat.pickingUnits ??
@@ -498,7 +609,7 @@ const buildTimelineRowsFromReport = (report) => {
     return {
       name: stat.operator,
       team: `EWH ${stat.ewhHours.toFixed(2)}h · 件数 ${stat.totalUnits}`,
-      segments: merged,
+      segments: enriched,
       unitsByStage,
     }
   })
@@ -718,6 +829,8 @@ function App() {
   const fileInputs = useRef({})
   const tipRaf = useRef(null)
   const tipPending = useRef(null)
+  const todayKey = dateList[0]?.key ?? ''
+  const isTodaySelected = selectedDate === todayKey
   const selectedDateLabel =
     dateList.find((item) => item.key === selectedDate)?.label ?? labelFromKey(selectedDate, locale)
 
@@ -725,6 +838,10 @@ function App() {
     localStorage.setItem('obup.lang', lang)
   }, [lang])
   const combinedReport = buildCombinedReport(pickingReport, sortingReport, packingReport)
+  const attendanceWindowMap = useMemo(
+    () => buildAttendanceWindowMap(attendanceReport, manualNameMap),
+    [attendanceReport, manualNameMap]
+  )
   const reportForDetails =
     detailStageFilter === 'picking'
       ? pickingReport
@@ -744,7 +861,9 @@ function App() {
             ? '拣货+分拨+打包'
             : '拣货+分拨+打包'
   const stageLabel = t(stageLabelKey)
-  const timelineData = combinedReport ? buildTimelineRowsFromReport(combinedReport) : []
+  const timelineData = combinedReport
+    ? buildTimelineRowsFromReport(combinedReport, attendanceWindowMap)
+    : []
   const timelineSearchKey = normalizeName(timelineSearch)
   const filteredTimeline = timelineData.filter((row) => {
     if (timelineSearchKey && !normalizeName(row.name).includes(timelineSearchKey)) {
@@ -1178,7 +1297,7 @@ function App() {
   const getDateTone = (dateKey) => {
     if (!dateKey) return 'waiting'
     const stateForDate = uploadStateByDate[dateKey] || {}
-    const keys = uploads.map((u) => u.key)
+    const keys = uploads.filter((u) => !u.auto).map((u) => u.key)
     let tone = 'waiting'
     if (stateForDate && Object.keys(stateForDate).length) {
       const anyError = keys.some((k) => stateForDate[k]?.status === 'error')
@@ -1218,6 +1337,15 @@ function App() {
       setAttendanceReport(null)
     }
   }
+
+  useEffect(() => {
+    if (!isTodaySelected) return undefined
+    const refreshMs = 2 * 60 * 1000
+    const id = setInterval(() => {
+      fetchAttendanceReport(selectedDate)
+    }, refreshMs)
+    return () => clearInterval(id)
+  }, [isTodaySelected, selectedDate])
 
   useEffect(() => {
     fetchUploadState(selectedDate)
@@ -1419,7 +1547,9 @@ function App() {
 
   const showTimelineTip = (event, seg, row) => {
     const label =
-      seg.stage === 'picking'
+      seg.stage === 'attendance'
+        ? '考勤内未作业'
+        : seg.stage === 'picking'
         ? '拣货'
         : seg.stage === 'sorting'
           ? '分拨'
@@ -1453,7 +1583,12 @@ function App() {
                   ? row.unitsByStage?.packingMulti
                   : row.unitsByStage?.packing
               : null
-    const unitText = units || units === 0 ? ` · 件数 ${units}` : ''
+    const unitText =
+      seg.stage === 'attendance'
+        ? ''
+        : units || units === 0
+          ? ` · 件数 ${units}`
+          : ''
     const durationText = ` · ${duration}分钟`
     const content = `${label} ${start} → ${end}${durationText}${seg.stage === 'idle' ? '' : unitText}`
     const offset = 12
@@ -2093,7 +2228,7 @@ function App() {
               <span>{t('已选日期')}: {selectedDate} ({selectedDateLabel})</span>
             </div>
             <div className="upload-grid">
-              {uploads.map((item) => {
+              {uploads.filter((item) => !item.auto).map((item) => {
                 const view = getUploadView(item.key, uploadState)
                 const isUploading = uploadingKeys.has(item.key)
                 const helper =
