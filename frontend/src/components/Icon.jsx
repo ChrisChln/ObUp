@@ -29,6 +29,12 @@ const ICONS = {
       <circle cx="12" cy="7" r="4"></circle>
     </svg>
   ),
+  link: (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M10 13a5 5 0 0 1 0-7l1.5-1.5a5 5 0 0 1 7 7L17 13"></path>
+      <path d="M14 11a5 5 0 0 1 0 7L12.5 19.5a5 5 0 0 1-7-7L7 11"></path>
+    </svg>
+  ),
   trash: (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <polyline points="3 6 5 6 21 6"></polyline>
@@ -54,5 +60,4 @@ export default function Icon({ name, className = '', ...rest }) {
     </span>
   )
 }
-
 

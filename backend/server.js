@@ -1240,6 +1240,77 @@ app.get('/api/whitelist', async (req, res) => {
   }
 })
 
+app.get('/api/account-links', async (req, res) => {
+  if (!supabase) {
+    res.json({ ok: true, links: [] })
+    return
+  }
+  try {
+    const { data, error } = await supabase
+      .from('account_links')
+      .select('source_name,target_name')
+      .order('source_name')
+    if (error) {
+      console.warn('Fetch account_links failed', error)
+      res.json({ ok: true, links: [] })
+      return
+    }
+    res.json({ ok: true, links: data || [] })
+  } catch (error) {
+    console.error('Account links error', error)
+    res.json({ ok: true, links: [] })
+  }
+})
+
+app.post('/api/account-links', async (req, res) => {
+  const sourceName = String(req.body?.sourceName || '').trim()
+  const targetName = String(req.body?.targetName || '').trim()
+  if (!sourceName || !targetName) {
+    res.status(400).json({ ok: false, message: 'sourceName and targetName are required' })
+    return
+  }
+  if (!supabase) {
+    res.json({ ok: true })
+    return
+  }
+  try {
+    const { error } = await supabase
+      .from('account_links')
+      .upsert({ source_name: sourceName, target_name: targetName }, { onConflict: 'source_name' })
+    if (error) {
+      console.warn('Upsert account_links failed', error)
+      res.status(500).json({ ok: false, message: 'save failed' })
+      return
+    }
+    res.json({ ok: true })
+  } catch (error) {
+    console.error('Save account link error', error)
+    res.status(500).json({ ok: false, message: 'save failed' })
+  }
+})
+
+app.delete('/api/account-links', async (req, res) => {
+  const sourceName = String(req.query?.sourceName || '').trim()
+  if (!supabase) {
+    res.json({ ok: true })
+    return
+  }
+  try {
+    let query = supabase.from('account_links').delete()
+    if (sourceName) query = query.eq('source_name', sourceName)
+    const { error } = await query
+    if (error) {
+      console.warn('Delete account_links failed', error)
+      res.status(500).json({ ok: false, message: 'delete failed' })
+      return
+    }
+    res.json({ ok: true })
+  } catch (error) {
+    console.error('Delete account link error', error)
+    res.status(500).json({ ok: false, message: 'delete failed' })
+  }
+})
+
 app.get('/api/name-matches', async (req, res) => {
   const workDate = String(req.query?.date || '').trim()
   if (!supabase) {

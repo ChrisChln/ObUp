@@ -226,6 +226,7 @@ const TRANSLATIONS = {
     '分拨扫描与交接时段': 'Sorting scans and handoff time',
     '签到、请假与排班': 'Check-in, leave, schedules',
     '白名单': 'Whitelist',
+    '账号关联': 'Account Link',
     '设置': 'Settings',
     '人员': 'Name',
     '名字': 'Name',
@@ -273,7 +274,8 @@ const TRANSLATIONS = {
     '当前没有需要匹配的姓名。': 'No names to match.',
     '选择工作账号': 'Select work account',
     '取消匹配': 'Clear match',
-    '匹配仅对当前日期生效': 'Matches apply to this date only',
+    '匹配全局生效': 'Matches are global',
+    '匹配仅对当前日期生效': 'Matches apply to selected date only',
     '确认清空所有手动匹配？': 'Clear all matches?',
     '清空匹配': 'Clear matches',
     '输入密码后可新增/删除白名单': 'Enter password to edit whitelist',
@@ -798,6 +800,7 @@ function App() {
     }
     return {}
   })
+  const [accountLinkMap, setAccountLinkMap] = useState({})
   const [quickLinks, setQuickLinks] = useState(() => {
     try {
       const raw = localStorage.getItem('obup.quickLinks')
@@ -814,6 +817,7 @@ function App() {
   })
   const [showSettings, setShowSettings] = useState(false)
   const [showMatch, setShowMatch] = useState(false)
+  const [showAccountLink, setShowAccountLink] = useState(false)
   const [showWhitelist, setShowWhitelist] = useState(false)
   const [whitelistUnlocked, setWhitelistUnlocked] = useState(false)
   const [whitelistInput, setWhitelistInput] = useState('')
@@ -837,10 +841,14 @@ function App() {
   useEffect(() => {
     localStorage.setItem('obup.lang', lang)
   }, [lang])
+  const effectiveNameMap = useMemo(
+    () => ({ ...accountLinkMap, ...manualNameMap }),
+    [accountLinkMap, manualNameMap]
+  )
   const combinedReport = buildCombinedReport(pickingReport, sortingReport, packingReport)
   const attendanceWindowMap = useMemo(
-    () => buildAttendanceWindowMap(attendanceReport, manualNameMap),
-    [attendanceReport, manualNameMap]
+    () => buildAttendanceWindowMap(attendanceReport, effectiveNameMap),
+    [attendanceReport, effectiveNameMap]
   )
   const reportForDetails =
     detailStageFilter === 'picking'
@@ -927,9 +935,9 @@ function App() {
         sortingReport,
         packingReport,
         attendanceReport,
-        manualNameMap
+        effectiveNameMap
       ),
-    [combinedReport, pickingReport, sortingReport, packingReport, attendanceReport, manualNameMap]
+    [combinedReport, pickingReport, sortingReport, packingReport, attendanceReport, effectiveNameMap]
   )
   const detailTeams = useMemo(
     () => Array.from(new Set(detailRows.flatMap((row) => Array.from(row.groups)))),
@@ -966,12 +974,12 @@ function App() {
   const isWhitelistExempt = (role) => Boolean(role && role !== '异常')
   const startTimeMaps = useMemo(
     () => ({
-      picking: buildStartTimeMap(pickingReport, manualNameMap, 'picking'),
-      sorting: buildStartTimeMap(sortingReport, manualNameMap, 'sorting'),
-      packing: buildStartTimeMap(packingReport, manualNameMap, 'packing'),
-      all: buildStartTimeMap(combinedReport, manualNameMap, 'all'),
+      picking: buildStartTimeMap(pickingReport, effectiveNameMap, 'picking'),
+      sorting: buildStartTimeMap(sortingReport, effectiveNameMap, 'sorting'),
+      packing: buildStartTimeMap(packingReport, effectiveNameMap, 'packing'),
+      all: buildStartTimeMap(combinedReport, effectiveNameMap, 'all'),
     }),
-    [pickingReport, sortingReport, packingReport, combinedReport, manualNameMap]
+    [pickingReport, sortingReport, packingReport, combinedReport, effectiveNameMap]
   )
   const hasAttendanceData = (attendanceReport?.stats || []).length > 0
   const attendanceNames = useMemo(
@@ -1025,8 +1033,8 @@ function App() {
   )
   const mappedTargets = useMemo(
     () =>
-      new Set(Object.values(manualNameMap).map((name) => normalizeWorkKey(name)).filter(Boolean)),
-    [manualNameMap]
+      new Set(Object.values(effectiveNameMap).map((name) => normalizeWorkKey(name)).filter(Boolean)),
+    [effectiveNameMap]
   )
   const usedWorkKeySet = useMemo(() => {
     const set = new Set(mappedTargets)
@@ -1054,20 +1062,35 @@ function App() {
     const set = new Set()
     detailRows.forEach((row) => {
       if (!row.attendanceName) return
-      if (manualNameMap[row.attendanceName]) return
+      if (effectiveNameMap[row.attendanceName]) return
       if (row.attendanceMatched) set.add(row.attendanceName)
     })
     return set
-  }, [detailRows, manualNameMap])
+  }, [detailRows, effectiveNameMap])
   const unmatchedNames = useMemo(
     () =>
       attendanceNames.filter((name) => {
-        if (manualNameMap[name]) return false
+        if (effectiveNameMap[name]) return false
         const key = normalizeName(name)
         return key && !workKeySet.has(key)
       }),
-    [attendanceNames, manualNameMap, workKeySet]
+    [attendanceNames, effectiveNameMap, workKeySet]
   )
+  const matchPanelNames = useMemo(
+    () => [...unmatchedNames].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN')),
+    [unmatchedNames]
+  )
+  const accountLinkPanelNames = useMemo(() => {
+    const linked = attendanceNames.filter((name) => Boolean(accountLinkMap[name]))
+    const unresolved = attendanceNames.filter((name) => {
+      if (accountLinkMap[name]) return false
+      const key = normalizeName(name)
+      return key && !workKeySet.has(key)
+    })
+    return Array.from(new Set([...unresolved, ...linked])).sort((a, b) =>
+      a.localeCompare(b, 'zh-Hans-CN')
+    )
+  }, [attendanceNames, accountLinkMap, workKeySet])
   const filteredDetailRows = useMemo(
     () =>
       detailRows.filter((person) => {
@@ -1522,7 +1545,27 @@ function App() {
   }, [manualNameMap])
 
   useEffect(() => {
-    const loadNameMatches = async () => {
+    const loadAccountLinks = async () => {
+      try {
+        const response = await fetch('/api/account-links')
+        if (!response.ok) return
+        const data = await response.json()
+        if (Array.isArray(data.links)) {
+          const map = {}
+          data.links.forEach((row) => {
+            if (row?.source_name && row?.target_name) map[row.source_name] = row.target_name
+          })
+          setAccountLinkMap(map)
+        }
+      } catch (error) {
+        // ignore
+      }
+    }
+    loadAccountLinks()
+  }, [])
+
+  useEffect(() => {
+    const loadManualMatches = async () => {
       if (!selectedDate) {
         setManualNameMap({})
         return
@@ -1537,12 +1580,14 @@ function App() {
             if (row?.source_name && row?.target_name) map[row.source_name] = row.target_name
           })
           setManualNameMap(map)
+        } else {
+          setManualNameMap({})
         }
       } catch (error) {
-        // ignore
+        setManualNameMap({})
       }
     }
-    loadNameMatches()
+    loadManualMatches()
   }, [selectedDate])
 
   const showTimelineTip = (event, seg, row) => {
@@ -1652,6 +1697,38 @@ function App() {
     )
   }
 
+  const updateAccountLinkMap = async (sourceName, targetName) => {
+    setAccountLinkMap((prev) => {
+      const next = { ...prev }
+      if (!targetName) {
+        delete next[sourceName]
+        return next
+      }
+      Object.keys(next).forEach((key) => {
+        if (next[key] === targetName && key !== sourceName) {
+          delete next[key]
+        }
+      })
+      next[sourceName] = targetName
+      return next
+    })
+    try {
+      if (!targetName) {
+        await fetch(`/api/account-links?sourceName=${encodeURIComponent(sourceName)}`, {
+          method: 'DELETE',
+        })
+      } else {
+        await fetch('/api/account-links', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sourceName, targetName }),
+        })
+      }
+    } catch (error) {
+      // ignore
+    }
+  }
+
   const updateNameMap = async (sourceName, targetName) => {
     setManualNameMap((prev) => {
       const next = { ...prev }
@@ -1722,6 +1799,15 @@ function App() {
         ).catch(() => null)
       )
     )
+  }
+
+  const resetAccountLinks = async () => {
+    setAccountLinkMap({})
+    try {
+      await fetch('/api/account-links', { method: 'DELETE' })
+    } catch (error) {
+      // ignore
+    }
   }
 
   const exportDetailExcel = async () => {
@@ -1838,7 +1924,7 @@ function App() {
         (!person.attendanceMatched || person.attendanceHours <= 0)
       const ratioIssue = !whitelistExempt && ratio !== null && (ratio < 75 || ratio > 100)
       const waitingAttendance = !hasAttendance && person.ewhHours > 0
-      const matchedByManual = person.attendanceName && manualNameMap[person.attendanceName]
+      const matchedByManual = person.attendanceName && effectiveNameMap[person.attendanceName]
       const hasIssue = forcedIssue || matchIssue || ratioIssue
       const label = whitelistRole
         ? t(whitelistRole)
@@ -2079,6 +2165,16 @@ function App() {
           onClick={() => setShowWhitelist(true)}
         >
           <Icon name="user" /> <span style={{ marginLeft: 8 }}>{t('白名单')}</span>
+        </button>
+        <button
+          type="button"
+          className="topnav__detail"
+          onClick={() => {
+            setSelectedMatchName('')
+            setShowAccountLink(true)
+          }}
+        >
+          <Icon name="link" /> <span style={{ marginLeft: 8 }}>{t('账号关联')}</span>
         </button>
         <button
           type="button"
@@ -2556,7 +2652,16 @@ function App() {
                 {detailSortDir === 'asc' ? t('升序') : t('降序')}
               </button>
             </div>
-            {/* 手动匹配按钮已移除 */}
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => {
+                setSelectedMatchName('')
+                setShowMatch(true)
+              }}
+            >
+              <Icon name="link" /> <span style={{ marginLeft: 8 }}>{t('手动匹配')}</span>
+            </button>
             <button
               type="button"
               className="ghost"
@@ -2676,12 +2781,12 @@ function App() {
                 const waitingAttendance =
                   !hasAttendanceData && person.ewhHours > 0
                 const matchedByManual =
-                  person.attendanceName && manualNameMap[person.attendanceName]
+                  person.attendanceName && effectiveNameMap[person.attendanceName]
                 const hasIssue = forcedIssue || matchIssue || ratioIssue
                 const canOpenMatch =
                   person.attendanceName &&
                   (hasIssue ||
-                    manualNameMap[person.attendanceName] ||
+                    effectiveNameMap[person.attendanceName] ||
                     whitelistRole)
                 const statusLabel = whitelistRole
                   ? t(whitelistRole)
@@ -2892,6 +2997,76 @@ function App() {
         </div>
       )}
 
+      {showAccountLink && (
+        <div className="settings-backdrop" onClick={() => setShowAccountLink(false)}>
+          <div className="settings-panel match-panel" onClick={(event) => event.stopPropagation()}>
+            <div className="settings-header">
+              <h3>账号关联（全局）</h3>
+              <button type="button" onClick={() => setShowAccountLink(false)}>
+                {t('关闭')}
+              </button>
+            </div>
+            <div className="match-list">
+              {selectedMatchName && !accountLinkPanelNames.includes(selectedMatchName) ? (
+                <div className="match-empty">{t('请选择考勤账号进行匹配')}</div>
+              ) : null}
+              {attendanceNames.length === 0 ? (
+                <div className="match-empty">{t('暂无考勤数据，无法匹配。')}</div>
+              ) : accountLinkPanelNames.length === 0 ? (
+                <div className="match-empty">{t('当前没有需要匹配的姓名。')}</div>
+              ) : (
+                (selectedMatchName && accountLinkPanelNames.includes(selectedMatchName)
+                  ? [selectedMatchName]
+                  : accountLinkPanelNames
+                ).map((name) => {
+                  const current = accountLinkMap[name] || ''
+                  return (
+                    <div key={`al-${name}`} className="match-item">
+                      <div className="match-name">{name}</div>
+                      <div className="match-select-wrap">
+                        <input
+                          className="match-select"
+                          list={`account-link-opts-${name}`}
+                          value={current}
+                          onChange={(event) => updateAccountLinkMap(name, event.target.value)}
+                          placeholder={t('选择工作账号')}
+                        />
+                        <datalist id={`account-link-opts-${name}`}>
+                          {availableWorkOptions
+                            .concat(current && !availableWorkOptions.includes(current) ? [current] : [])
+                            .map((att) => (
+                              <option key={`${name}-${att}`} value={att} />
+                            ))}
+                        </datalist>
+                      </div>
+                      <button
+                        type="button"
+                        className="match-clear"
+                        onClick={() => updateAccountLinkMap(name, '')}
+                      >
+                        {t('取消匹配')}
+                      </button>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+            <div className="settings-footer">
+              <span>{t('匹配全局生效')}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!confirm(t('确认清空所有手动匹配？'))) return
+                  resetAccountLinks()
+                }}
+              >
+                {t('清空匹配')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showMatch && (
         <div className="settings-backdrop" onClick={() => setShowMatch(false)}>
           <div className="settings-panel match-panel" onClick={(event) => event.stopPropagation()}>
@@ -2902,7 +3077,7 @@ function App() {
               </button>
             </div>
             <div className="match-list">
-              {selectedMatchName && !attendanceNames.includes(selectedMatchName) ? (
+              {selectedMatchName && !matchPanelNames.includes(selectedMatchName) ? (
                 <div className="match-empty">{t('请选择考勤账号进行匹配')}</div>
               ) : null}
               {attendanceNames.length === 0 ? (
@@ -2912,7 +3087,6 @@ function App() {
                   .map((name) => {
                     const current = manualNameMap[name] || ''
                     const isAutoMatched = autoMatchedNameSet.has(name)
-                    const currentRole = whitelistRoleMap.get(normalizeName(name)) || ''
                     return (
                       <div key={name} className="match-item">
                         <div className="match-name">{name}</div>
@@ -2936,18 +3110,6 @@ function App() {
                             <div className="match-hint">{t('系统自动匹配不可修改')}</div>
                           )}
                         </div>
-                        <select
-                          className="match-role"
-                          value={currentRole}
-                          onChange={(event) => updateWhitelistRole(name, event.target.value)}
-                        >
-                          <option value="">{t('无')}</option>
-                          {whitelistRoles.map((role) => (
-                            <option key={role} value={role}>
-                              {t(role)}
-                            </option>
-                          ))}
-                        </select>
                         <button
                           type="button"
                           className="match-clear"
@@ -2959,10 +3121,10 @@ function App() {
                       </div>
                     )
                   })
-              ) : unmatchedNames.length === 0 ? (
+              ) : matchPanelNames.length === 0 ? (
                 <div className="match-empty">{t('当前没有需要匹配的姓名。')}</div>
               ) : (
-                unmatchedNames
+                matchPanelNames
                   .sort((a, b) =>
                     selectedMatchName && a === selectedMatchName
                       ? -1
@@ -2973,7 +3135,6 @@ function App() {
                   .map((name) => {
                     const current = manualNameMap[name] || ''
                     const isAutoMatched = autoMatchedNameSet.has(name)
-                    const currentRole = whitelistRoleMap.get(normalizeName(name)) || ''
                     return (
                       <div key={name} className="match-item">
                         <div className="match-name">{name}</div>
@@ -2997,18 +3158,6 @@ function App() {
                             <div className="match-hint">{t('系统自动匹配不可修改')}</div>
                           )}
                         </div>
-                        <select
-                          className="match-role"
-                          value={currentRole}
-                          onChange={(event) => updateWhitelistRole(name, event.target.value)}
-                        >
-                          <option value="">{t('无')}</option>
-                          {whitelistRoles.map((role) => (
-                            <option key={role} value={role}>
-                              {t(role)}
-                            </option>
-                          ))}
-                        </select>
                         <button
                           type="button"
                           className="match-clear"
