@@ -89,10 +89,43 @@ const toDateKey = (date) =>
   `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
 
 const zonedTimeToUtc = (y, m, d, hh, mm, ss, tz) => {
-  const utcDate = new Date(Date.UTC(y, m - 1, d, hh, mm, ss))
-  const tzDate = new Date(utcDate.toLocaleString('en-US', { timeZone: tz }))
-  const offsetMs = tzDate.getTime() - utcDate.getTime()
-  return new Date(utcDate.getTime() - offsetMs)
+  const guessUtcMs = Date.UTC(y, m - 1, d, hh, mm, ss)
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+  const parts = formatter.formatToParts(new Date(guessUtcMs))
+  const map = {}
+  parts.forEach((part) => {
+    if (part.type !== 'literal') map[part.type] = part.value
+  })
+  const asUtcMs = Date.UTC(
+    Number(map.year),
+    Number(map.month) - 1,
+    Number(map.day),
+    Number(map.hour),
+    Number(map.minute),
+    Number(map.second)
+  )
+  const offsetMs = asUtcMs - guessUtcMs
+  return new Date(guessUtcMs - offsetMs)
+}
+
+const buildDateFromParts = (y, m, d, hh = 0, mm = 0, ss = 0) => {
+  if (workTimezone) {
+    try {
+      return zonedTimeToUtc(y, m, d, hh, mm, ss, workTimezone)
+    } catch (error) {
+      // Keep parsing resilient even if timezone config is invalid.
+    }
+  }
+  return new Date(y, m - 1, d, hh, mm, ss, 0)
 }
 
 const windowForWorkDate = (workDateStr) => {
@@ -114,21 +147,35 @@ const parseTimestamp = (value) => {
   if (value instanceof Date && !Number.isNaN(value.getTime())) return value
   if (typeof value === 'number') {
     const parsed = XLSX.SSF.parse_date_code(value)
-    if (parsed) return new Date(parsed.y, parsed.m - 1, parsed.d, parsed.H, parsed.M, parsed.S)
+    if (parsed) {
+      return buildDateFromParts(parsed.y, parsed.m, parsed.d, parsed.H, parsed.M, parsed.S)
+    }
   }
   if (typeof value === 'string') {
     const trimmed = value.trim()
     const dateOnly = trimmed.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})$/)
     if (dateOnly) {
       const [, y, m, d] = dateOnly
-      return new Date(Number(y), Number(m) - 1, Number(d))
+      return buildDateFromParts(Number(y), Number(m), Number(d), 0, 0, 0)
+    }
+    const hasTzSuffix = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(trimmed)
+    if (hasTzSuffix) {
+      const t = Date.parse(trimmed)
+      if (!Number.isNaN(t)) return new Date(t)
     }
     const match = trimmed.match(
-      /^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?/
+      /^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/
     )
     if (match) {
       const [, y, m, d, hh, mm, ss] = match
-      return new Date(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm), Number(ss || 0))
+      return buildDateFromParts(
+        Number(y),
+        Number(m),
+        Number(d),
+        Number(hh),
+        Number(mm),
+        Number(ss || 0)
+      )
     }
     const t = Date.parse(trimmed)
     if (!Number.isNaN(t)) return new Date(t)
@@ -1093,13 +1140,26 @@ const fetchReport = async (date, stage) => {
   }
   if (!reportRow) return null
 
-  if (reportRow.meta?._stats) {
+  const normalizeReportWindow = (report) => {
+    if (!report?.meta?.workDate) return report
+    const { start, end } = windowForWorkDate(report.meta.workDate)
     return {
+      ...report,
+      meta: {
+        ...report.meta,
+        windowStart: start.toISOString(),
+        windowEnd: end.toISOString(),
+      },
+    }
+  }
+
+  if (reportRow.meta?._stats) {
+    return normalizeReportWindow({
       meta: { ...reportRow.meta, _stats: undefined, _segments: undefined, _kpi: undefined },
       kpi: reportRow.meta._kpi || reportRow.kpi || {},
       stats: reportRow.meta._stats || [],
       segments: reportRow.meta._segments || {},
-    }
+    })
   }
 
   const { data: details } = await supabase
@@ -1119,7 +1179,7 @@ const fetchReport = async (date, stage) => {
     segments[item.operator] = item.segments || []
   })
 
-  return {
+  return normalizeReportWindow({
     meta: reportRow.meta,
     kpi: {
       employees: reportRow.employees ?? stats.length,
@@ -1130,7 +1190,7 @@ const fetchReport = async (date, stage) => {
     },
     stats,
     segments,
-  }
+  })
 }
 
 const getLatestUploadRecord = async (date, type) => {
