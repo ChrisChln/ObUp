@@ -259,6 +259,36 @@ const TRANSLATIONS = {
     '手动匹配': 'Match',
     '导出': 'Export',
     '生成日报': 'Report',
+    '报告中心': 'Report Center',
+    '报告类型': 'Report Type',
+    '单个员工报告': 'Single Employee',
+    '整个岗位报告（含时间线）': 'Role Report (with timeline)',
+    '选择员工': 'Select Employee',
+    '生成预览': 'Preview',
+    '打印报告': 'Print',
+    '请先选择员工': 'Please select an employee first',
+    '报告生成失败，请允许弹窗后重试。': 'Failed to open report window. Please allow pop-ups and retry.',
+    '报告摘要': 'Summary',
+    '时间线': 'Timeline',
+    '筛选条件': 'Filters',
+    '仅异常': 'Abnormal only',
+    '是': 'Yes',
+    '否': 'No',
+    '记录数': 'Rows',
+    '员工报告': 'Employee Report',
+    '岗位报告': 'Role Report',
+    '岗位': 'Role',
+    '最近30天': 'Last 30 days',
+    '数据天数': 'Days with data',
+    '平均时效': 'Avg UPH',
+    '平均占比': 'Avg Ratio',
+    '日期': 'Date',
+    '趋势图': 'Trend',
+    '起止': 'Period',
+    '时长(分钟)': 'Duration (min)',
+    '员工时间线': 'Employee Timeline',
+    '岗位时间线': 'Role Timeline',
+    '加载中': 'Loading',
     '全部班组': 'All teams',
     '暂无人效数据': 'No efficiency data',
     '暂无数据': 'No data',
@@ -841,6 +871,16 @@ function App() {
   const [showMatch, setShowMatch] = useState(false)
   const [showAccountLink, setShowAccountLink] = useState(false)
   const [showWhitelist, setShowWhitelist] = useState(false)
+  const [showReportDialog, setShowReportDialog] = useState(false)
+  const [showReportPreview, setShowReportPreview] = useState(false)
+  const [reportPreviewTitle, setReportPreviewTitle] = useState('')
+  const [reportPreviewHtml, setReportPreviewHtml] = useState('')
+  const [reportType, setReportType] = useState('single')
+  const [reportEmployeeName, setReportEmployeeName] = useState('')
+  const [reportLoading, setReportLoading] = useState(false)
+  const [reportEmployeeOptions, setReportEmployeeOptions] = useState([])
+  const [reportEmployeeOptionsLoading, setReportEmployeeOptionsLoading] = useState(false)
+  const [globalWorkAccounts, setGlobalWorkAccounts] = useState([])
   const [whitelistUnlocked, setWhitelistUnlocked] = useState(false)
   const [whitelistInput, setWhitelistInput] = useState('')
   const [whitelistRoleInput, setWhitelistRoleInput] = useState('组长')
@@ -855,6 +895,8 @@ function App() {
   const fileInputs = useRef({})
   const tipRaf = useRef(null)
   const tipPending = useRef(null)
+  const reportPreviewRef = useRef(null)
+  const reportEmployeePoolCacheRef = useRef(new Map())
   const todayKey = dateList[0]?.key ?? ''
   const isTodaySelected = selectedDate === todayKey
   const selectedDateLabel =
@@ -1078,6 +1120,10 @@ function App() {
         return key && !usedWorkKeySet.has(key)
       }),
     [workNames, usedWorkKeySet]
+  )
+  const accountLinkOptions = useMemo(
+    () => (globalWorkAccounts.length ? globalWorkAccounts : workNames).slice().sort((a, b) => a.localeCompare(b, locale)),
+    [globalWorkAccounts, workNames, locale]
   )
   const autoMatchedNameSet = useMemo(() => {
     const set = new Set()
@@ -1393,6 +1439,13 @@ function App() {
     fetchAttendanceReport(selectedDate)
   }, [selectedDate])
 
+  useEffect(() => {
+    if (!showReportDialog) return
+    if (reportEmployeeName) return
+    if (!reportEmployeeOptions.length) return
+    setReportEmployeeName(reportEmployeeOptions[0])
+  }, [showReportDialog, reportEmployeeOptions])
+
   const efficiencyRows = detailRows
     .filter((row) => {
       if (efficiencyFilter === 'picking' && !row.groups.has('拣货')) return false
@@ -1577,6 +1630,22 @@ function App() {
       }
     }
     loadAccountLinks()
+  }, [])
+
+  useEffect(() => {
+    const loadGlobalWorkAccounts = async () => {
+      try {
+        const response = await fetch('/api/work-accounts')
+        if (!response.ok) return
+        const data = await response.json()
+        if (Array.isArray(data.accounts)) {
+          setGlobalWorkAccounts(data.accounts.filter(Boolean))
+        }
+      } catch (error) {
+        // ignore
+      }
+    }
+    loadGlobalWorkAccounts()
   }, [])
 
   useEffect(() => {
@@ -1823,6 +1892,555 @@ function App() {
     } catch (error) {
       // ignore
     }
+  }
+
+  const getReportStartMap = () =>
+    detailStageFilter === 'picking'
+      ? startTimeMaps.picking
+      : detailStageFilter === 'sorting'
+        ? startTimeMaps.sorting
+        : detailStageFilter === 'packing'
+          ? startTimeMaps.packing
+          : startTimeMaps.all
+
+  const getReportStartLabel = (person) => {
+    const startMap = getReportStartMap()
+    const startKey = person.attendanceName
+      ? normalizeName(person.attendanceName)
+      : person.workKey
+        ? person.workKey
+        : person.sources && person.sources.size
+          ? normalizeWorkKey(Array.from(person.sources)[0])
+          : normalizeName(person.name)
+    const startMs = startMap.get(startKey)
+    return Number.isFinite(startMs)
+      ? new Date(startMs).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
+      : '--'
+  }
+
+  const getReportUnitsForStage = (person) => {
+    if (detailStageFilter === 'picking') return Number(person.pickingUnits || 0)
+    if (detailStageFilter === 'sorting') return Number(person.sortingUnits || 0)
+    if (detailStageFilter === 'packing') {
+      return Number(person.packingSingleUnits || 0) + Number(person.packingMultiUnits || 0)
+    }
+    return (
+      Number(person.pickingUnits || 0) +
+      Number(person.sortingUnits || 0) +
+      Number(person.packingSingleUnits || 0) +
+      Number(person.packingMultiUnits || 0)
+    )
+  }
+
+  const getReportEwhForStage = (person) => {
+    if (detailStageFilter === 'picking') return Number(person.pickingEwhHours || 0)
+    if (detailStageFilter === 'sorting') return Number(person.sortingEwhHours || 0)
+    if (detailStageFilter === 'packing') {
+      return (
+        Number(person.packingSingleEwhHours || 0) + Number(person.packingMultiEwhHours || 0)
+      )
+    }
+    return Number(person.ewhHours || 0)
+  }
+
+  const getReportStatus = (person) => {
+    const ratio = calcWorkRatioPercent(person.ewhHours, person.attendanceHours)
+    const whitelistRole = getWhitelistRole(person)
+    const whitelistExempt = isWhitelistExempt(whitelistRole)
+    const forcedIssue = whitelistRole === '异常'
+    const matchIssue =
+      !whitelistExempt &&
+      hasAttendanceData &&
+      (!person.attendanceMatched || person.attendanceHours <= 0)
+    const ratioIssue = !whitelistExempt && ratio !== null && (ratio < 75 || ratio > 100)
+    const waitingAttendance = !hasAttendanceData && person.ewhHours > 0
+    const matchedByManual = person.attendanceName && effectiveNameMap[person.attendanceName]
+    const hasIssue = forcedIssue || matchIssue || ratioIssue
+    return whitelistRole
+      ? t(whitelistRole)
+      : waitingAttendance
+        ? t('待上传')
+        : hasIssue
+          ? t('异常')
+          : matchedByManual
+            ? t('已匹配')
+            : t('正常')
+  }
+
+  const escapeHtml = (value) =>
+    String(value ?? '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;')
+
+  const toTimelineClock = (minutes) => {
+    const total = Math.round(Number(minutes || 0))
+    const hh = Math.floor((total % 1440) / 60)
+    const mm = total % 60
+    return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
+  }
+
+  const getSegLabel = (seg) => {
+    if (seg.stage === 'attendance') return t('考勤内未作业')
+    if (seg.stage === 'picking') return t('拣货')
+    if (seg.stage === 'sorting') return t('分拨')
+    if (seg.stage === 'packing') {
+      if (seg.type === 'packing-single') return t('打包(单品)')
+      if (seg.type === 'packing-multi') return t('打包(多品)')
+      return t('打包')
+    }
+    return t('非作业')
+  }
+
+  const getSegColor = (seg) => {
+    if (seg.stage === 'picking') return '#4f8cff'
+    if (seg.stage === 'sorting') return '#44b98f'
+    if (seg.stage === 'packing') return '#f6b54b'
+    if (seg.stage === 'attendance') return '#8a63d2'
+    return '#e56a6a'
+  }
+
+  const renderTrackHtml = (segments = []) =>
+    `<div class="track">${segments
+      .map((seg) => {
+        const left = ((seg.start - dayStart) / daySpan) * 100
+        const width = ((seg.end - seg.start) / daySpan) * 100
+        return `<span class="seg" style="left:${left}%;width:${Math.max(width, 0.2)}%;background:${getSegColor(
+          seg
+        )};"></span>`
+      })
+      .join('')}</div>`
+
+  const renderTimelineRowsHtml = (rows = []) =>
+    rows
+      .map((row) => {
+        const segments = row.segments || []
+        const detailRowsHtml = segments
+          .map((seg) => {
+            const minutes = Math.max(0, Math.round(seg.end - seg.start))
+            return `<tr><td>${escapeHtml(getSegLabel(seg))}</td><td>${escapeHtml(
+              `${toTimelineClock(seg.start)} - ${toTimelineClock(seg.end)}`
+            )}</td><td>${minutes}</td></tr>`
+          })
+          .join('')
+        return `<div class="timeline-person">
+          <div class="timeline-head"><strong>${escapeHtml(row.name)}</strong>${renderTrackHtml(
+          segments
+        )}</div>
+          <table class="tiny-table">
+            <thead><tr><th>${escapeHtml(t('状态'))}</th><th>${escapeHtml(t('起止'))}</th><th>${escapeHtml(
+          t('时长(分钟)')
+        )}</th></tr></thead>
+            <tbody>${detailRowsHtml || `<tr><td colspan="3">--</td></tr>`}</tbody>
+          </table>
+        </div>`
+      })
+      .join('')
+
+  const renderSingleReportAreaChartHtml = (rows = []) => {
+    const ordered = rows
+      .filter((row) => row.eff !== null || row.score !== null)
+      .sort((a, b) => (a.dateKey > b.dateKey ? 1 : -1))
+    if (!ordered.length) return `<div class="card">--</div>`
+
+    const width = 820
+    const height = 240
+    const pad = 28
+    const innerW = width - pad * 2
+    const innerH = height - pad * 2
+    const maxValue = Math.max(
+      1,
+      ...ordered.flatMap((row) => [row.eff || 0, row.score || 0])
+    )
+    const xAt = (idx) =>
+      ordered.length === 1 ? pad + innerW / 2 : pad + (idx / (ordered.length - 1)) * innerW
+    const yAt = (value) => pad + innerH - (Number(value || 0) / maxValue) * innerH
+
+    const buildSeries = (getter) =>
+      ordered
+        .map((row, idx) => {
+          const value = getter(row)
+          return value === null ? null : { x: xAt(idx), y: yAt(value), value }
+        })
+        .filter(Boolean)
+
+    const uphSeries = buildSeries((row) => row.eff)
+    const scoreSeries = buildSeries((row) => row.score)
+    const toPoints = (series) => series.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')
+    const toAreaPath = (series) => {
+      if (!series.length) return ''
+      const first = series[0]
+      const last = series[series.length - 1]
+      const line = toPoints(series)
+      return `M ${first.x.toFixed(1)} ${(
+        pad + innerH
+      ).toFixed(1)} L ${line.replaceAll(',', ' ')} L ${last.x.toFixed(1)} ${(
+        pad + innerH
+      ).toFixed(1)} Z`
+    }
+
+    const startLabel = ordered[0]?.dateKey || ''
+    const endLabel = ordered[ordered.length - 1]?.dateKey || ''
+
+    return `
+      <div style="border:1px solid #e5e7eb;border-radius:10px;padding:10px;background:#fff">
+        <div style="display:flex;gap:14px;align-items:center;font-size:12px;margin-bottom:6px">
+          <span style="display:inline-flex;align-items:center;gap:6px"><i style="display:inline-block;width:10px;height:10px;background:#f59e0b;border-radius:50%"></i>${escapeHtml(
+            t('时效')
+          )}</span>
+          <span style="display:inline-flex;align-items:center;gap:6px"><i style="display:inline-block;width:10px;height:10px;background:#3b82f6;border-radius:50%"></i>${escapeHtml(
+            t('综合分')
+          )}</span>
+        </div>
+        <svg viewBox="0 0 ${width} ${height}" width="100%" height="240" role="img" aria-label="UPH and Composite Score Trend">
+          <rect x="${pad}" y="${pad}" width="${innerW}" height="${innerH}" fill="#f8fafc" stroke="#e5e7eb"/>
+          <path d="${toAreaPath(uphSeries)}" fill="rgba(245,158,11,0.24)"></path>
+          <polyline points="${toPoints(uphSeries)}" fill="none" stroke="#f59e0b" stroke-width="2"></polyline>
+          <path d="${toAreaPath(scoreSeries)}" fill="rgba(59,130,246,0.2)"></path>
+          <polyline points="${toPoints(scoreSeries)}" fill="none" stroke="#3b82f6" stroke-width="2"></polyline>
+          <text x="${pad}" y="${height - 8}" font-size="11" fill="#6b7280">${escapeHtml(startLabel)}</text>
+          <text x="${width - pad}" y="${height - 8}" text-anchor="end" font-size="11" fill="#6b7280">${escapeHtml(
+      endLabel
+    )}</text>
+        </svg>
+      </div>
+    `
+  }
+
+  const openReportWindow = (title, html, printNow = false) => {
+    setReportPreviewTitle(title)
+    setReportPreviewHtml(html)
+    setShowReportPreview(true)
+    if (printNow) {
+      setTimeout(() => {
+        const iframeWin = reportPreviewRef.current?.contentWindow
+        if (iframeWin) {
+          iframeWin.focus()
+          iframeWin.print()
+        }
+      }, 250)
+    }
+  }
+
+  const buildReportHtml = (title, summaryHtml, tableHtml, timelineHtml) => `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>${escapeHtml(title)}</title>
+    <style>
+      body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#1f2937}
+      h1{font-size:24px;margin:0 0 6px}
+      h2{font-size:16px;margin:20px 0 10px}
+      .meta{color:#6b7280;font-size:12px;margin-bottom:10px}
+      .summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px}
+      .card{border:1px solid #e5e7eb;border-radius:10px;padding:8px 10px;background:#fafafa}
+      table{width:100%;border-collapse:collapse;font-size:12px}
+      th,td{border:1px solid #e5e7eb;padding:6px 8px;text-align:left}
+      th{background:#f3f4f6}
+      .timeline-person{margin-bottom:14px}
+      .timeline-head{display:grid;grid-template-columns:220px 1fr;align-items:center;gap:8px;margin-bottom:6px}
+      .track{position:relative;height:14px;background:#eef2f7;border-radius:99px;overflow:hidden}
+      .seg{position:absolute;top:0;height:100%}
+      .tiny-table th,.tiny-table td{font-size:11px;padding:4px 6px}
+      @media print { body{margin:10mm} }
+    </style>
+  </head>
+  <body>
+    <h1>${escapeHtml(title)}</h1>
+    <h2>${escapeHtml(t('报告摘要'))}</h2>
+    <div class="summary">${summaryHtml}</div>
+    <h2>${escapeHtml(t('人员明细'))}</h2>
+    ${tableHtml}
+    <h2>${escapeHtml(t('时间线'))}</h2>
+    ${timelineHtml}
+  </body>
+</html>`
+
+  const buildRecentDateKeys = (endDateKey, days = 30) => {
+    const [y, m, d] = String(endDateKey || '')
+      .split('-')
+      .map(Number)
+    const base = new Date(y, (m || 1) - 1, d || 1)
+    if (Number.isNaN(base.getTime())) return []
+    const keys = []
+    for (let i = 0; i < days; i += 1) {
+      const cur = new Date(base)
+      cur.setDate(base.getDate() - i)
+      keys.push(toDateKey(cur))
+    }
+    return keys
+  }
+
+  const fetchReportByStage = async (stage, dateKey) => {
+    try {
+      const response = await fetch(`/api/reports/${stage}?date=${dateKey}`)
+      if (!response.ok) return null
+      const data = await response.json()
+      return data?.report || null
+    } catch (error) {
+      return null
+    }
+  }
+
+  const fetchAllReportsByDate = async (dateKey) => {
+    const [picking, sorting, packing, attendance] = await Promise.all([
+      fetchReportByStage('picking', dateKey),
+      fetchReportByStage('sorting', dateKey),
+      fetchReportByStage('packing', dateKey),
+      fetchReportByStage('attendance', dateKey),
+    ])
+    return { picking, sorting, packing, attendance }
+  }
+
+  useEffect(() => {
+    if (!showReportDialog || reportType !== 'single') return
+    let cancelled = false
+    const loadEmployeePool = async () => {
+      const cacheKey = `${selectedDate}:30`
+      if (reportEmployeePoolCacheRef.current.has(cacheKey)) {
+        const cached = reportEmployeePoolCacheRef.current.get(cacheKey) || []
+        setReportEmployeeOptions(cached)
+        if (!reportEmployeeName && cached.length) setReportEmployeeName(cached[0])
+        return
+      }
+      setReportEmployeeOptionsLoading(true)
+      try {
+        let list = []
+        try {
+          const response = await fetch(
+            `/api/report-employees?date=${encodeURIComponent(selectedDate)}&days=30`
+          )
+          if (response.ok) {
+            const data = await response.json()
+            if (Array.isArray(data?.employees)) {
+              list = data.employees.filter(Boolean)
+            }
+          }
+        } catch (error) {
+          // ignore and fallback below
+        }
+        if (!list.length) {
+          const dateKeys = buildRecentDateKeys(selectedDate, 30)
+          const datasets = await Promise.all(dateKeys.map((dateKey) => fetchAllReportsByDate(dateKey)))
+          if (cancelled) return
+          const names = new Set()
+          datasets.forEach((set) => {
+            const combined = buildCombinedReport(set.picking, set.sorting, set.packing)
+            const rows = buildDetailRows(
+              combined,
+              set.picking,
+              set.sorting,
+              set.packing,
+              set.attendance,
+              effectiveNameMap
+            )
+            rows.forEach((row) => {
+              const name = String(row?.name || '').trim()
+              if (name) names.add(name)
+            })
+          })
+          list = Array.from(names)
+        }
+        list = list.sort((a, b) => a.localeCompare(b, locale))
+        if (cancelled) return
+        setReportEmployeeOptions(list)
+        reportEmployeePoolCacheRef.current.set(cacheKey, list)
+        if (!reportEmployeeName && list.length) {
+          setReportEmployeeName(list[0])
+        } else if (reportEmployeeName && !list.includes(reportEmployeeName)) {
+          setReportEmployeeName('')
+        }
+      } finally {
+        if (!cancelled) setReportEmployeeOptionsLoading(false)
+      }
+    }
+    loadEmployeePool()
+    return () => {
+      cancelled = true
+    }
+  }, [showReportDialog, reportType, selectedDate, locale, effectiveNameMap])
+
+  const handleGenerateReport = async (printNow = false) => {
+    if (reportLoading) return
+    if (!sortedDetailRows.length) {
+      alert(t('暂无数据'))
+      return
+    }
+    if (reportType === 'single' && !reportEmployeeName) {
+      alert(t('请先选择员工'))
+      return
+    }
+
+    if (reportType === 'single') {
+      setReportLoading(true)
+      try {
+        const dateKeys = buildRecentDateKeys(selectedDate, 30)
+        const targetKey = normalizeName(reportEmployeeName)
+        const datasets = await Promise.all(dateKeys.map((dateKey) => fetchAllReportsByDate(dateKey)))
+
+        const dayRows = []
+        datasets.forEach((set, idx) => {
+          const dateKey = dateKeys[idx]
+          const combined = buildCombinedReport(set.picking, set.sorting, set.packing)
+          if (!combined && !set.attendance) return
+          const rows = buildDetailRows(
+            combined,
+            set.picking,
+            set.sorting,
+            set.packing,
+            set.attendance,
+            effectiveNameMap
+          )
+          const person = rows.find((row) => {
+            const n1 = normalizeName(row.name)
+            const n2 = normalizeName(row.attendanceName)
+            return n1 === targetKey || n2 === targetKey
+          })
+          if (!person) return
+
+          const startMap = buildStartTimeMap(combined, effectiveNameMap, 'all')
+          const startKey = person.attendanceName
+            ? normalizeName(person.attendanceName)
+            : person.workKey || normalizeName(person.name)
+          const startMs = startMap.get(startKey)
+          const startLabel = Number.isFinite(startMs)
+            ? new Date(startMs).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
+            : '--'
+          const units =
+            Number(person.pickingUnits || 0) +
+            Number(person.sortingUnits || 0) +
+            Number(person.packingSingleUnits || 0) +
+            Number(person.packingMultiUnits || 0)
+          const ewh = Number(person.ewhHours || 0)
+          const hours = Number(person.attendanceHours || 0)
+          const eff = ewh > 0 ? units / ewh : null
+          const ratio = calcWorkRatioPercent(ewh, hours)
+          dayRows.push({
+            dateKey,
+            personName: person.name || reportEmployeeName,
+            startLabel,
+            ewh,
+            hours,
+            units,
+            eff,
+            ratio,
+            score: typeof person.compositeScore === 'number' ? person.compositeScore : null,
+            status: getReportStatus(person),
+          })
+        })
+
+        const sortedDays = dayRows.sort((a, b) => (a.dateKey < b.dateKey ? 1 : -1))
+        const totals = sortedDays.reduce(
+          (acc, row) => {
+            acc.units += row.units
+            acc.ewh += row.ewh
+            if (row.ratio !== null) {
+              acc.ratioSum += row.ratio
+              acc.ratioCnt += 1
+            }
+            return acc
+          },
+          { units: 0, ewh: 0, ratioSum: 0, ratioCnt: 0 }
+        )
+        const avgUph = totals.ewh > 0 ? totals.units / totals.ewh : null
+
+        const summaryHtml = [
+          [t('人员'), reportEmployeeName || '--'],
+          [t('最近30天'), `${dateKeys[dateKeys.length - 1]} ~ ${dateKeys[0]}`],
+          [t('数据天数'), sortedDays.length],
+          [t('件数'), totals.units],
+          [t('平均时效'), avgUph == null ? '--' : avgUph.toFixed(2)],
+        ]
+          .map(([k, v]) => `<div class="card"><strong>${escapeHtml(k)}</strong><div>${escapeHtml(v)}</div></div>`)
+          .join('')
+
+        const tableRows = sortedDays
+          .map(
+            (row) => `<tr>
+          <td>${escapeHtml(row.dateKey)}</td>
+          <td>${escapeHtml(row.startLabel)}</td>
+          <td>${escapeHtml(row.ewh.toFixed(2))}</td>
+          <td>${escapeHtml(row.hours.toFixed(2))}</td>
+          <td>${row.units}</td>
+          <td>${escapeHtml(row.eff == null ? '--' : row.eff.toFixed(2))}</td>
+          <td>${escapeHtml(row.score == null ? '--' : row.score.toFixed(2))}</td>
+          <td>${escapeHtml(row.ratio == null ? '--' : `${row.ratio.toFixed(0)}%`)}</td>
+          <td>${escapeHtml(row.status)}</td>
+        </tr>`
+          )
+          .join('')
+
+        const tableHtml = `<table><thead><tr>
+          <th>${escapeHtml(t('日期'))}</th><th>${escapeHtml(t('开始工作'))}</th><th>${escapeHtml(
+            t('有效工时')
+          )}</th>
+          <th>${escapeHtml(t('工时'))}</th><th>${escapeHtml(t('件数'))}</th><th>${escapeHtml(t('时效'))}</th>
+          <th>${escapeHtml(t('综合分'))}</th><th>${escapeHtml(t('工作时间占比'))}</th><th>${escapeHtml(
+            t('状态')
+          )}</th>
+        </tr></thead><tbody>${tableRows || `<tr><td colspan="9">--</td></tr>`}</tbody></table>`
+
+        const title = `${t('员工报告')} - ${reportEmployeeName}`
+        const timelineHtml = `<h3>${escapeHtml(t('趋势图'))}</h3>${renderSingleReportAreaChartHtml(
+          sortedDays
+        )}`
+        openReportWindow(title, buildReportHtml(title, summaryHtml, tableHtml, timelineHtml), printNow)
+        setShowReportDialog(false)
+      } finally {
+        setReportLoading(false)
+      }
+      return
+    }
+
+    const rows = sortedDetailRows
+    const summaryHtml = [
+      [t('岗位'), stageLabel],
+      [t('记录数'), rows.length],
+      [t('筛选条件'), `${teamFilter === 'all' ? t('全部班组') : t(teamFilter)} / ${t('仅异常')} ${detailOnlyAbnormal ? t('是') : t('否')}`],
+      [t('件数'), rows.reduce((acc, row) => acc + getReportUnitsForStage(row), 0)],
+      [t('有效工时'), rows.reduce((acc, row) => acc + Number(row.ewhHours || 0), 0).toFixed(2)],
+    ]
+      .map(([k, v]) => `<div class="card"><strong>${escapeHtml(k)}</strong><div>${escapeHtml(v)}</div></div>`)
+      .join('')
+
+    const tableRows = rows
+      .map((person) => {
+        const units = getReportUnitsForStage(person)
+        const stageEwh = getReportEwhForStage(person)
+        const eff = stageEwh > 0 ? units / stageEwh : null
+        const ratio = calcWorkRatioPercent(person.ewhHours, person.attendanceHours)
+        return `<tr>
+          <td>${escapeHtml(person.name || '--')}</td>
+          <td>${escapeHtml(getReportStartLabel(person))}</td>
+          <td>${escapeHtml(Number(person.ewhHours || 0).toFixed(2))}</td>
+          <td>${escapeHtml(Number(person.attendanceHours || 0).toFixed(2))}</td>
+          <td>${units}</td>
+          <td>${escapeHtml(eff == null ? '--' : eff.toFixed(2))}</td>
+          <td>${escapeHtml(typeof person.compositeScore === 'number' ? person.compositeScore.toFixed(2) : '--')}</td>
+          <td>${escapeHtml(ratio == null ? '--' : `${ratio.toFixed(0)}%`)}</td>
+          <td>${escapeHtml(getReportStatus(person))}</td>
+        </tr>`
+      })
+      .join('')
+    const tableHtml = `<table><thead><tr>
+      <th>${escapeHtml(t('人员'))}</th><th>${escapeHtml(t('开始工作'))}</th><th>${escapeHtml(t('有效工时'))}</th>
+      <th>${escapeHtml(t('工时'))}</th><th>${escapeHtml(t('件数'))}</th><th>${escapeHtml(t('时效'))}</th>
+      <th>${escapeHtml(t('综合分'))}</th><th>${escapeHtml(t('工作时间占比'))}</th><th>${escapeHtml(t('状态'))}</th>
+    </tr></thead><tbody>${tableRows || `<tr><td colspan="9">--</td></tr>`}</tbody></table>`
+
+    const timelineHtml = groupedTimeline.length
+      ? groupedTimeline
+          .map(
+            (group) =>
+              `<h3>${escapeHtml(group.label)}</h3>${renderTimelineRowsHtml(group.rows)}`
+          )
+          .join('')
+      : `<div class="card">--</div>`
+    const title = `${t('岗位报告')} - ${stageLabel}`
+    openReportWindow(title, buildReportHtml(title, summaryHtml, tableHtml, timelineHtml), printNow)
+    setShowReportDialog(false)
   }
 
   const exportDetailExcel = async () => {
@@ -2668,23 +3286,11 @@ function App() {
             </div>
             <button
               type="button"
-              className="ghost"
-              onClick={() => {
-                setSelectedMatchName('')
-                setShowMatch(true)
-              }}
+              className="primary"
+              onClick={() => setShowReportDialog(true)}
             >
-              <Icon name="link" /> <span style={{ marginLeft: 8 }}>{t('手动匹配')}</span>
+              <Icon name="calendar" /> <span style={{ marginLeft: 8 }}>{t('生成日报')}</span>
             </button>
-            <button
-              type="button"
-              className="ghost"
-              onClick={exportDetailExcel}
-              disabled={!sortedDetailRows.length}
-            >
-              <Icon name="file" /> <span style={{ marginLeft: 8 }}>{t('导出')}</span>
-            </button>
-            <button type="button" className="primary"><Icon name="calendar" /> <span style={{ marginLeft: 8 }}>{t('生成日报')}</span></button>
           </div>
         </div>
           <div className="table">
@@ -2953,6 +3559,145 @@ function App() {
         </div>
       </section>
 
+      {showReportDialog && (
+        <div
+          className="settings-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setShowReportDialog(false)
+          }}
+        >
+          <div className="settings-panel" onClick={(event) => event.stopPropagation()}>
+            <div className="settings-header">
+              <h3>{t('报告中心')}</h3>
+              <button type="button" onClick={() => setShowReportDialog(false)}>
+                {t('关闭')}
+              </button>
+            </div>
+            <div className="settings-grid">
+              <div className="settings-item">
+                <label className="match-name">{t('报告类型')}</label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  className={reportType === 'single' ? 'chip active' : 'chip'}
+                  onClick={() => setReportType('single')}
+                  disabled={reportLoading}
+                >
+                  {t('单个员工报告')}
+                </button>
+                  <button
+                  type="button"
+                  className={reportType === 'role' ? 'chip active' : 'chip'}
+                  onClick={() => setReportType('role')}
+                  disabled={reportLoading}
+                >
+                  {t('整个岗位报告（含时间线）')}
+                </button>
+                </div>
+              </div>
+              {reportType === 'single' ? (
+                <div className="settings-item">
+                  <label className="match-name">{t('选择员工')}</label>
+                  <input
+                    className="settings-input"
+                    list="report-employee-options"
+                    type="text"
+                    value={reportEmployeeName || ''}
+                    onChange={(event) => setReportEmployeeName(event.target.value)}
+                    disabled={reportLoading || reportEmployeeOptionsLoading}
+                    placeholder={reportEmployeeOptionsLoading ? t('加载中') : t('搜索人员')}
+                  />
+                  <datalist id="report-employee-options">
+                    {reportEmployeeOptions.map((name) => (
+                      <option key={name} value={name} />
+                    ))}
+                  </datalist>
+                </div>
+              ) : null}
+            </div>
+            <div className="settings-footer">
+              <span>
+                {t('记录数')}: {reportType === 'single' ? reportEmployeeOptions.length : sortedDetailRows.length}
+              </span>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => handleGenerateReport(false)}
+                  disabled={reportLoading || reportEmployeeOptionsLoading}
+                >
+                  {t('生成预览')}
+                </button>
+                <button
+                  type="button"
+                  className="primary"
+                  onClick={() => handleGenerateReport(true)}
+                  disabled={reportLoading || reportEmployeeOptionsLoading}
+                >
+                  {t('打印报告')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showReportPreview && (
+        <div
+          className="settings-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setShowReportPreview(false)
+          }}
+        >
+          <div
+            className="settings-panel"
+            style={{
+              width: 'min(1100px, 96vw)',
+              height: 'min(88vh, 960px)',
+              display: 'grid',
+              gridTemplateRows: 'auto 1fr auto',
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="settings-header">
+              <h3>{reportPreviewTitle || t('报告中心')}</h3>
+              <button type="button" onClick={() => setShowReportPreview(false)}>
+                {t('关闭')}
+              </button>
+            </div>
+            <div style={{ flex: 1, minHeight: 0 }}>
+              <iframe
+                ref={reportPreviewRef}
+                title="report-preview"
+                srcDoc={reportPreviewHtml}
+                style={{ width: '100%', height: '100%', border: '1px solid rgba(18,19,21,0.12)', borderRadius: 12 }}
+              />
+            </div>
+            <div className="settings-footer">
+              <span>{t('报告摘要')}</span>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => {
+                    const iframeWin = reportPreviewRef.current?.contentWindow
+                    if (iframeWin) {
+                      iframeWin.focus()
+                      iframeWin.print()
+                    }
+                  }}
+                >
+                  {t('打印报告')}
+                </button>
+                <button type="button" className="primary" onClick={() => setShowReportPreview(false)}>
+                  {t('确定')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showSettings && (
         <div className="settings-backdrop" onClick={() => setShowSettings(false)}>
           <div className="settings-panel" onClick={(event) => event.stopPropagation()}>
@@ -3011,7 +3756,12 @@ function App() {
       )}
 
       {showAccountLink && (
-        <div className="settings-backdrop" onClick={() => setShowAccountLink(false)}>
+        <div
+          className="settings-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setShowAccountLink(false)
+          }}
+        >
           <div className="settings-panel match-panel" onClick={(event) => event.stopPropagation()}>
             <div className="settings-header">
               <h3>{t('账号关联（全局）')}</h3>
@@ -3045,8 +3795,8 @@ function App() {
                           placeholder={t('选择工作账号')}
                         />
                         <datalist id={`account-link-opts-${name}`}>
-                          {availableWorkOptions
-                            .concat(current && !availableWorkOptions.includes(current) ? [current] : [])
+                          {accountLinkOptions
+                            .concat(current && !accountLinkOptions.includes(current) ? [current] : [])
                             .map((att) => (
                               <option key={`${name}-${att}`} value={att} />
                             ))}
@@ -3081,7 +3831,12 @@ function App() {
       )}
 
       {showMatch && (
-        <div className="settings-backdrop" onClick={() => setShowMatch(false)}>
+        <div
+          className="settings-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setShowMatch(false)
+          }}
+        >
           <div className="settings-panel match-panel" onClick={(event) => event.stopPropagation()}>
             <div className="settings-header">
               <h3>{t('人员匹配（以考勤姓名为主）')}</h3>
@@ -3201,7 +3956,12 @@ function App() {
       )}
 
       {showWhitelist && (
-        <div className="settings-backdrop" onClick={() => setShowWhitelist(false)}>
+        <div
+          className="settings-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setShowWhitelist(false)
+          }}
+        >
           <div className="settings-panel match-panel" onClick={(event) => event.stopPropagation()}>
             <div className="settings-header">
               <h3>{t('白名单')}</h3>

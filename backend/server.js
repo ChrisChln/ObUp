@@ -1322,6 +1322,138 @@ app.get('/api/account-links', async (req, res) => {
   }
 })
 
+app.get('/api/work-accounts', async (req, res) => {
+  const normalizeList = (list) =>
+    Array.from(
+      new Set(
+        (list || [])
+          .map((name) => String(name || '').trim())
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b, 'en'))
+
+  if (!supabase) {
+    const fromMemory = [
+      ...Array.from(pickingReports.values()),
+      ...Array.from(sortingReports.values()),
+      ...Array.from(packingReports.values()),
+    ]
+      .flatMap((rep) => rep?.stats || [])
+      .map((item) => item?.operator)
+    res.json({ ok: true, accounts: normalizeList(fromMemory) })
+    return
+  }
+
+  try {
+    const pageSize = 1000
+    const maxPages = 20
+    const names = new Set()
+    for (let page = 0; page < maxPages; page += 1) {
+      const from = page * pageSize
+      const to = from + pageSize - 1
+      const { data, error } = await supabase
+        .from('report_details')
+        .select('operator')
+        .range(from, to)
+      if (error) {
+        console.warn('Fetch work accounts failed', error)
+        res.json({ ok: true, accounts: [] })
+        return
+      }
+      const rows = data || []
+      rows.forEach((row) => {
+        const op = String(row?.operator || '').trim()
+        if (op) names.add(op)
+      })
+      if (rows.length < pageSize) break
+    }
+    res.json({ ok: true, accounts: normalizeList(Array.from(names)) })
+  } catch (error) {
+    console.error('Work accounts error', error)
+    res.json({ ok: true, accounts: [] })
+  }
+})
+
+app.get('/api/report-employees', async (req, res) => {
+  const dateKey = String(req.query?.date || '').trim()
+  const daysRaw = Number(req.query?.days || 30)
+  const days = Number.isFinite(daysRaw) ? Math.max(1, Math.min(90, Math.floor(daysRaw))) : 30
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+    res.status(400).json({ ok: false, message: 'valid date is required' })
+    return
+  }
+
+  const normalizeList = (list) =>
+    Array.from(
+      new Set(
+        (list || [])
+          .map((name) => String(name || '').trim())
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b, 'en'))
+
+  const end = new Date(`${dateKey}T00:00:00`)
+  const start = new Date(end)
+  start.setDate(end.getDate() - (days - 1))
+  const startKey = toDateKey(start)
+
+  if (!supabase) {
+    const inRange = (key) => key >= startKey && key <= dateKey
+    const fromMemory = []
+    ;[pickingReports, sortingReports, packingReports, attendanceReports].forEach((mapRef) => {
+      mapRef.forEach((report, key) => {
+        if (!inRange(String(key || ''))) return
+        ;(report?.stats || []).forEach((item) => fromMemory.push(item?.operator))
+      })
+    })
+    res.json({ ok: true, employees: normalizeList(fromMemory) })
+    return
+  }
+
+  try {
+    const { data: reports, error: reportErr } = await supabase
+      .from('reports')
+      .select('id,work_date,stage,created_at')
+      .gte('work_date', startKey)
+      .lte('work_date', dateKey)
+      .in('stage', ['picking', 'sorting', 'packing', 'attendance'])
+      .order('created_at', { ascending: false })
+
+    if (reportErr) {
+      console.warn('Fetch reports for report-employees failed', reportErr)
+      res.json({ ok: true, employees: [] })
+      return
+    }
+
+    const latestByKey = new Map()
+    ;(reports || []).forEach((row) => {
+      const key = `${row.work_date}:${row.stage}`
+      if (!latestByKey.has(key)) latestByKey.set(key, row.id)
+    })
+    const reportIds = Array.from(latestByKey.values())
+    if (!reportIds.length) {
+      res.json({ ok: true, employees: [] })
+      return
+    }
+
+    const { data: details, error: detailErr } = await supabase
+      .from('report_details')
+      .select('operator')
+      .in('report_id', reportIds)
+
+    if (detailErr) {
+      console.warn('Fetch report_details for report-employees failed', detailErr)
+      res.json({ ok: true, employees: [] })
+      return
+    }
+
+    res.json({ ok: true, employees: normalizeList((details || []).map((row) => row?.operator)) })
+  } catch (error) {
+    console.error('Report employees error', error)
+    res.json({ ok: true, employees: [] })
+  }
+})
+
 app.post('/api/account-links', async (req, res) => {
   const sourceName = String(req.body?.sourceName || '').trim()
   const targetName = String(req.body?.targetName || '').trim()

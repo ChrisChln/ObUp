@@ -658,6 +658,18 @@
   background: rgba(255, 255, 255, 0.9);
 }
 
+/* remove decorative square markers from chips/buttons */
+.chip::before,
+.chip-check::before,
+.chip-check.active::before,
+button.primary::before,
+button.ghost::before,
+.settings-header button::before,
+.settings-footer button::before,
+.match-clear::before {
+  display: none !important;
+}
+
 .hero__panel {
   display: grid;
   gap: 18px;
@@ -1649,6 +1661,9 @@ button.ghost::before {
   justify-self: start;
   min-width: 36px;
   justify-content: center;
+  white-space: nowrap;
+  word-break: keep-all;
+  flex: 0 0 auto;
 }
 
 .status-tag[role='button'] {
@@ -1703,10 +1718,16 @@ button.ghost::before {
 .person {
   display: grid;
   gap: 4px;
+  min-width: 0;
 }
 
 .person small {
   color: var(--muted);
+}
+
+.person strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .tag {
