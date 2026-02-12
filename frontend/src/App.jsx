@@ -884,6 +884,7 @@ function App() {
   const [whitelistUnlocked, setWhitelistUnlocked] = useState(false)
   const [whitelistInput, setWhitelistInput] = useState('')
   const [whitelistRoleInput, setWhitelistRoleInput] = useState('组长')
+  const [accountLinkSearch, setAccountLinkSearch] = useState('')
   const [timelineTip, setTimelineTip] = useState({ visible: false, x: 0, y: 0, content: '' })
   const [selectedMatchName, setSelectedMatchName] = useState('')
   const [productionIndex, setProductionIndex] = useState(0)
@@ -1158,6 +1159,13 @@ function App() {
       a.localeCompare(b, 'zh-Hans-CN')
     )
   }, [attendanceNames, accountLinkMap, workKeySet])
+  const accountLinkSearchKey = useMemo(() => normalizeName(accountLinkSearch), [accountLinkSearch])
+  const filteredAccountLinkPanelNames = useMemo(() => {
+    if (!accountLinkSearchKey) return accountLinkPanelNames
+    return accountLinkPanelNames.filter((name) =>
+      normalizeName(name).includes(accountLinkSearchKey)
+    )
+  }, [accountLinkPanelNames, accountLinkSearchKey])
   const filteredDetailRows = useMemo(
     () =>
       detailRows.filter((person) => {
@@ -2803,6 +2811,7 @@ function App() {
           className="topnav__detail"
           onClick={() => {
             setSelectedMatchName('')
+            setAccountLinkSearch('')
             setShowAccountLink(true)
           }}
         >
@@ -3769,18 +3778,25 @@ function App() {
                 {t('关闭')}
               </button>
             </div>
+            <input
+              className="settings-input"
+              type="text"
+              value={accountLinkSearch}
+              onChange={(event) => setAccountLinkSearch(event.target.value)}
+              placeholder={t('搜索账号')}
+            />
             <div className="match-list">
-              {selectedMatchName && !accountLinkPanelNames.includes(selectedMatchName) ? (
+              {selectedMatchName && !filteredAccountLinkPanelNames.includes(selectedMatchName) ? (
                 <div className="match-empty">{t('请选择考勤账号进行匹配')}</div>
               ) : null}
               {attendanceNames.length === 0 ? (
                 <div className="match-empty">{t('暂无考勤数据，无法匹配。')}</div>
-              ) : accountLinkPanelNames.length === 0 ? (
+              ) : filteredAccountLinkPanelNames.length === 0 ? (
                 <div className="match-empty">{t('当前没有需要匹配的姓名。')}</div>
               ) : (
-                (selectedMatchName && accountLinkPanelNames.includes(selectedMatchName)
+                (selectedMatchName && filteredAccountLinkPanelNames.includes(selectedMatchName)
                   ? [selectedMatchName]
-                  : accountLinkPanelNames
+                  : filteredAccountLinkPanelNames
                 ).map((name) => {
                   const current = accountLinkMap[name] || ''
                   return (
@@ -4120,6 +4136,68 @@ const normalizeWorkKey = (name) => {
   return normalizeName(raw)
 }
 
+const nameTokens = (name) =>
+  normalizeName(name)
+    .split(' ')
+    .map((t) => t.trim())
+    .filter(Boolean)
+
+const tokenJaccard = (aTokens, bTokens) => {
+  if (!aTokens.length || !bTokens.length) return 0
+  const a = new Set(aTokens)
+  const b = new Set(bTokens)
+  let inter = 0
+  a.forEach((item) => {
+    if (b.has(item)) inter += 1
+  })
+  const union = a.size + b.size - inter
+  return union > 0 ? inter / union : 0
+}
+
+const bigrams = (text) => {
+  const s = String(text || '').replace(/\s+/g, '')
+  if (!s) return []
+  if (s.length < 2) return [s]
+  const out = []
+  for (let i = 0; i < s.length - 1; i += 1) out.push(s.slice(i, i + 2))
+  return out
+}
+
+const diceSimilarity = (a, b) => {
+  const aa = bigrams(a)
+  const bb = bigrams(b)
+  if (!aa.length || !bb.length) return 0
+  const counts = new Map()
+  aa.forEach((x) => counts.set(x, (counts.get(x) || 0) + 1))
+  let inter = 0
+  bb.forEach((x) => {
+    const c = counts.get(x) || 0
+    if (c > 0) {
+      inter += 1
+      counts.set(x, c - 1)
+    }
+  })
+  return (2 * inter) / (aa.length + bb.length)
+}
+
+const nameSimilarityScore = (left, right) => {
+  const a = normalizeName(left)
+  const b = normalizeName(right)
+  if (!a || !b) return 0
+  if (a === b) return 1
+  const aTokens = nameTokens(a)
+  const bTokens = nameTokens(b)
+  const aSorted = [...aTokens].sort().join(' ')
+  const bSorted = [...bTokens].sort().join(' ')
+  if (aSorted && aSorted === bSorted) return 0.96
+  const jaccard = tokenJaccard(aTokens, bTokens)
+  const dice = diceSimilarity(a, b)
+  const sortedDice = diceSimilarity(aSorted, bSorted)
+  const prefixBoost =
+    (a.startsWith(b) || b.startsWith(a)) && Math.min(a.length, b.length) >= 4 ? 0.08 : 0
+  return Math.min(1, Math.max(jaccard, dice, sortedDice) + prefixBoost)
+}
+
 const buildDetailRows = (
   combinedReport,
   pickingReport,
@@ -4300,6 +4378,11 @@ const buildDetailRows = (
     workByKey.get(key).push(operator)
   })
 
+  const attendanceCandidates = Array.from(attendanceNameByKey.entries()).map(([key, display]) => ({
+    key,
+    display: String(display || key),
+  }))
+
   rows.forEach((row, key) => {
     if (row.sources.size) return
     const operators = workByKey.get(key)
@@ -4307,9 +4390,42 @@ const buildDetailRows = (
     operators.forEach((operator) => attachWork(row, operator))
   })
 
+  // 自动模糊匹配：相似度>=0.8且明显高于次优候选时自动映射
+  const fuzzyCandidates = []
   workData.forEach((_, operator) => {
     if (linkedWork.has(operator)) return
-    const mappedName = reverseNameMap.get(normalizeWorkKey(operator))
+    const workName = String(operator || '').trim()
+    if (!workName) return
+    let best = null
+    let second = null
+    attendanceCandidates.forEach((cand) => {
+      const score = nameSimilarityScore(workName, cand.display)
+      if (!best || score > best.score) {
+        second = best
+        best = { key: cand.key, name: cand.display, score }
+      } else if (!second || score > second.score) {
+        second = { key: cand.key, name: cand.display, score }
+      }
+    })
+    if (best && best.score >= 0.8 && (!second || best.score - second.score >= 0.08)) {
+      fuzzyCandidates.push({ operator, best })
+    }
+  })
+
+  fuzzyCandidates.sort((a, b) => b.best.score - a.best.score)
+  const fuzzyMapByOperator = new Map()
+  const usedAttendanceKeys = new Set()
+  fuzzyCandidates.forEach((item) => {
+    if (usedAttendanceKeys.has(item.best.key)) return
+    fuzzyMapByOperator.set(item.operator, item.best)
+    usedAttendanceKeys.add(item.best.key)
+  })
+
+  workData.forEach((_, operator) => {
+    if (linkedWork.has(operator)) return
+    const manualMappedName = reverseNameMap.get(normalizeWorkKey(operator))
+    const fuzzyMapped = fuzzyMapByOperator.get(operator)
+    const mappedName = manualMappedName || fuzzyMapped?.name || ''
     const baseKey = mappedName ? normalizeName(mappedName) : normalizeWorkKey(operator)
     if (!baseKey) return
     const baseName =
