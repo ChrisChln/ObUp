@@ -269,6 +269,17 @@ const TRANSLATIONS = {
     '语言': 'Language',
     '中文': 'Chinese',
     '英语': 'English',
+    '拣货为主': 'Picking-first',
+    '分拨为主': 'Sorting-first',
+    '打包为主': 'Packing-first',
+    '明细': 'Detail',
+    '请选择日期': 'Select date',
+    '账号关联（全局）': 'Account Link (Global)',
+    '人员匹配（以考勤姓名为主）': 'Name Match (Attendance-first)',
+    '考勤内未作业': 'Idle within attendance',
+    '打包(单品)': 'Packing (Single)',
+    '打包(多品)': 'Packing (Multi)',
+    '分钟': 'min',
     '人员匹配': 'Match names',
     '暂无考勤数据，无法匹配。': 'No attendance data.',
     '当前没有需要匹配的姓名。': 'No names to match.',
@@ -377,6 +388,17 @@ const timelineHours = [
 const dayStart = 5 * 60
 const dayEnd = 29 * 60
 const daySpan = dayEnd - dayStart
+const MIN_ATTENDANCE_HOURS = 0.5
+
+const isAttendanceHoursReliable = (hours) => {
+  const h = Number(hours || 0)
+  return Number.isFinite(h) && h >= MIN_ATTENDANCE_HOURS
+}
+
+const calcWorkRatioPercent = (ewhHours, attendanceHours) =>
+  isAttendanceHoursReliable(attendanceHours)
+    ? (Number(ewhHours || 0) / Number(attendanceHours || 0)) * 100
+    : null
 
 const mergeIntervals = (intervals) => {
   if (!intervals.length) return []
@@ -998,8 +1020,7 @@ function App() {
         (acc, row) => {
           if (!row.attendanceName) return acc
           if (!attendanceNameSet.has(normalizeName(row.attendanceName))) return acc
-          const ratio =
-            row.attendanceHours > 0 ? (row.ewhHours / row.attendanceHours) * 100 : null
+          const ratio = calcWorkRatioPercent(row.ewhHours, row.attendanceHours)
           const role = getWhitelistRole(row)
           const forcedIssue = role === '异常'
           if (isWhitelistExempt(role)) return acc
@@ -1097,10 +1118,7 @@ function App() {
         if (detailOnlyAbnormal) {
           if (!person.attendanceName) return false
           if (!attendanceNameSet.has(normalizeName(person.attendanceName))) return false
-          const ratio =
-            person.attendanceHours > 0
-              ? (person.ewhHours / person.attendanceHours) * 100
-              : null
+          const ratio = calcWorkRatioPercent(person.ewhHours, person.attendanceHours)
           const role = getWhitelistRole(person)
           const forcedIssue = role === '异常'
           const exempt = isWhitelistExempt(role)
@@ -1180,10 +1198,7 @@ function App() {
       return ewh > 0 ? units / ewh : null
     }
 
-    const getRatio = (person) =>
-      person.attendanceHours > 0
-        ? (Number(person.ewhHours || 0) / Number(person.attendanceHours || 0)) * 100
-        : null
+    const getRatio = (person) => calcWorkRatioPercent(person.ewhHours, person.attendanceHours)
 
     const getOvertime = (person) => {
       const h = Number(person.attendanceHours || 0)
@@ -1593,18 +1608,18 @@ function App() {
   const showTimelineTip = (event, seg, row) => {
     const label =
       seg.stage === 'attendance'
-        ? '考勤内未作业'
+        ? t('考勤内未作业')
         : seg.stage === 'picking'
-        ? '拣货'
+        ? t('拣货')
         : seg.stage === 'sorting'
-          ? '分拨'
+          ? t('分拨')
           : seg.stage === 'packing'
             ? seg.type === 'packing-single'
-              ? '打包(单品)'
+              ? t('打包(单品)')
               : seg.type === 'packing-multi'
-                ? '打包(多品)'
-                : '打包'
-            : '非作业'
+                ? t('打包(多品)')
+                : t('打包')
+            : t('非作业')
     const toTime = (minutes) => {
       const total = Math.round(minutes)
       const hh = Math.floor((total % 1440) / 60)
@@ -1632,9 +1647,9 @@ function App() {
       seg.stage === 'attendance'
         ? ''
         : units || units === 0
-          ? ` · 件数 ${units}`
+          ? ` · ${t('件数')} ${units}`
           : ''
-    const durationText = ` · ${duration}分钟`
+    const durationText = ` · ${duration}${t('分钟')}`
     const content = `${label} ${start} → ${end}${durationText}${seg.stage === 'idle' ? '' : unitText}`
     const offset = 12
     const maxWidth = 260
@@ -1913,8 +1928,7 @@ function App() {
     const hasAttendance = (attendanceReport?.stats || []).length > 0
 
     const computeStatus = (person) => {
-      const ratio =
-        person.attendanceHours > 0 ? (person.ewhHours / person.attendanceHours) * 100 : null
+      const ratio = calcWorkRatioPercent(person.ewhHours, person.attendanceHours)
       const whitelistRole = getWhitelistRole(person)
       const whitelistExempt = isWhitelistExempt(whitelistRole)
       const forcedIssue = whitelistRole === '异常'
@@ -1962,8 +1976,8 @@ function App() {
       const units = getUnitsForStage(person)
       const stageEwh = getEwhForStage(person)
       const eff = stageEwh > 0 ? units / stageEwh : ''
-      const ratio =
-        hours > 0 ? (Number(person.ewhHours || 0) / Number(person.attendanceHours || 0)) * 100 : ''
+      const ratioRaw = calcWorkRatioPercent(person.ewhHours, person.attendanceHours)
+      const ratio = ratioRaw === null ? '' : ratioRaw
       const status = computeStatus(person)
       const score = typeof person.compositeScore === 'number' ? person.compositeScore : ''
 
@@ -2192,7 +2206,7 @@ function App() {
 
       <header className="hero">
         <div className="hero__content">
-          <p className="eyebrow">Outbound Productivity</p>
+          <p className="eyebrow">{t('出库人效看板')}</p>
           <h1>{t('出库人效看板')}</h1>
           <p className="subtitle">{t('选中日期')}: {selectedDateLabel}</p>
           <div className="hero__meta">
@@ -2519,9 +2533,9 @@ function App() {
           {detailStageFilter === 'all' ? (
             <>
               <strong>{sortingKpi ? `${Math.round(sortingKpi.ratio * 100)}%` : '--'}</strong>
-              <small>分拨</small>
+              <small>{t('分拨')}</small>
               <strong>{pickingKpi ? `${Math.round(pickingKpi.ratio * 100)}%` : '--'}</strong>
-              <small>拣货</small>
+              <small>{t('拣货')}</small>
             </>
           ) : (
             <>
@@ -2687,26 +2701,25 @@ function App() {
             </div>
           {detailRows.length ? (
             sortedDetailRows.map((person) => {
-                const ratio =
-                  person.attendanceHours > 0 ? (person.ewhHours / person.attendanceHours) * 100 : null
+                const ratio = calcWorkRatioPercent(person.ewhHours, person.attendanceHours)
                 const groupList = Array.from(person.groups)
                 const groupText = groupList.join(' / ') || '--'
-                const detailText = `拣货 ${person.pickingUnits} | 分拨 ${person.sortingUnits} | 打包 ${
+                const detailText = `${t('拣货')} ${person.pickingUnits} | ${t('分拨')} ${person.sortingUnits} | ${t('打包')} ${
                   person.packingSingleUnits + person.packingMultiUnits
                 }`
                 const unitParts = []
                 if (detailStageFilter === 'picking') {
-                  unitParts.push(`拣货:${person.pickingUnits}`)
+                  unitParts.push(`${t('拣货')}:${person.pickingUnits}`)
                 } else if (detailStageFilter === 'sorting') {
-                  unitParts.push(`分拨:${person.sortingUnits}`)
+                  unitParts.push(`${t('分拨')}:${person.sortingUnits}`)
                 } else if (detailStageFilter === 'packing') {
-                  if (person.packingSingleUnits) unitParts.push(`单品:${person.packingSingleUnits}`)
-                  if (person.packingMultiUnits) unitParts.push(`多品:${person.packingMultiUnits}`)
+                  if (person.packingSingleUnits) unitParts.push(`${t('单品')}:${person.packingSingleUnits}`)
+                  if (person.packingMultiUnits) unitParts.push(`${t('多品')}:${person.packingMultiUnits}`)
                 } else {
-                  if (person.pickingUnits) unitParts.push(`拣货:${person.pickingUnits}`)
-                  if (person.sortingUnits) unitParts.push(`分拨:${person.sortingUnits}`)
-                  if (person.packingSingleUnits) unitParts.push(`单品:${person.packingSingleUnits}`)
-                  if (person.packingMultiUnits) unitParts.push(`多品:${person.packingMultiUnits}`)
+                  if (person.pickingUnits) unitParts.push(`${t('拣货')}:${person.pickingUnits}`)
+                  if (person.sortingUnits) unitParts.push(`${t('分拨')}:${person.sortingUnits}`)
+                  if (person.packingSingleUnits) unitParts.push(`${t('单品')}:${person.packingSingleUnits}`)
+                  if (person.packingMultiUnits) unitParts.push(`${t('多品')}:${person.packingMultiUnits}`)
                 }
                 const unitsLabel = unitParts.length ? unitParts.join('  ') : '--'
                 const units =
@@ -2728,9 +2741,9 @@ function App() {
                 const eff = ewh > 0 ? units / ewh : null
                 const effParts = []
                 if (detailStageFilter === 'picking') {
-                  effParts.push(`拣货:${eff === null ? '--' : eff.toFixed(1)}`)
+                  effParts.push(`${t('拣货')}:${eff === null ? '--' : eff.toFixed(1)}`)
                 } else if (detailStageFilter === 'sorting') {
-                  effParts.push(`分拨:${eff === null ? '--' : eff.toFixed(1)}`)
+                  effParts.push(`${t('分拨')}:${eff === null ? '--' : eff.toFixed(1)}`)
                 } else if (detailStageFilter === 'packing') {
                   const singleEff =
                     person.packingSingleEwhHours > 0
@@ -2740,8 +2753,8 @@ function App() {
                     person.packingMultiEwhHours > 0
                       ? person.packingMultiUnits / person.packingMultiEwhHours
                       : null
-                  if (person.packingSingleUnits) effParts.push(`单品:${singleEff === null ? '--' : singleEff.toFixed(1)}`)
-                  if (person.packingMultiUnits) effParts.push(`多品:${multiEff === null ? '--' : multiEff.toFixed(1)}`)
+                  if (person.packingSingleUnits) effParts.push(`${t('单品')}:${singleEff === null ? '--' : singleEff.toFixed(1)}`)
+                  if (person.packingMultiUnits) effParts.push(`${t('多品')}:${multiEff === null ? '--' : multiEff.toFixed(1)}`)
                 } else {
                   const pickEff =
                     person.pickingEwhHours > 0 ? person.pickingUnits / person.pickingEwhHours : null
@@ -2881,13 +2894,13 @@ function App() {
                         <RotatingBadges
                           items={unitParts}
                           getTone={(part) =>
-                            part.startsWith('拣货')
+                            part.startsWith(`${t('拣货')}:`)
                               ? 'picking'
-                              : part.startsWith('分拨')
+                              : part.startsWith(`${t('分拨')}:`)
                                 ? 'sorting'
-                                : part.startsWith('单品')
+                                : part.startsWith(`${t('单品')}:`)
                                   ? 'packing-single'
-                                  : part.startsWith('多品')
+                                  : part.startsWith(`${t('多品')}:`)
                                     ? 'packing-multi'
                                     : 'packing'
                           }
@@ -2905,13 +2918,13 @@ function App() {
                         <RotatingBadges
                           items={effParts}
                           getTone={(part) =>
-                            part.startsWith('拣货')
+                            part.startsWith(`${t('拣货')}:`)
                               ? 'picking'
-                              : part.startsWith('分拨')
+                              : part.startsWith(`${t('分拨')}:`)
                                 ? 'sorting'
-                                : part.startsWith('单品')
+                                : part.startsWith(`${t('单品')}:`)
                                   ? 'packing-single'
-                                  : part.startsWith('多品')
+                                  : part.startsWith(`${t('多品')}:`)
                                     ? 'packing-multi'
                                     : 'packing'
                           }
@@ -3001,7 +3014,7 @@ function App() {
         <div className="settings-backdrop" onClick={() => setShowAccountLink(false)}>
           <div className="settings-panel match-panel" onClick={(event) => event.stopPropagation()}>
             <div className="settings-header">
-              <h3>账号关联（全局）</h3>
+              <h3>{t('账号关联（全局）')}</h3>
               <button type="button" onClick={() => setShowAccountLink(false)}>
                 {t('关闭')}
               </button>
@@ -3583,9 +3596,9 @@ const buildDetailRows = (
     const sorting = Number(row.sortingUnits || 0)
     const score = picking * 1.0 + packingSingle * 0.8 + packingMulti * 0.5 + sorting * 0.3
     // 使用考勤系统的总工时（attendanceHours）归一化：综合分 = 总分 / attendanceHours
-    // 若无考勤或工时为 0，则显示为 null（页面会渲染为 --）
+    // 当考勤工时过小（<0.5h）时不计算，避免异常放大
     const attendanceHours = Number(row.attendanceHours || 0)
-    if (attendanceHours > 0) {
+    if (isAttendanceHoursReliable(attendanceHours)) {
       row.compositeScore = Math.round((score / attendanceHours) * 100) / 100
     } else {
       row.compositeScore = null
