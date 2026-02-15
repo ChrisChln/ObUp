@@ -853,6 +853,7 @@ function App() {
     return {}
   })
   const [accountLinkMap, setAccountLinkMap] = useState({})
+  const [accountLinkDraftMap, setAccountLinkDraftMap] = useState({})
   const [quickLinks, setQuickLinks] = useState(() => {
     try {
       const raw = localStorage.getItem('obup.quickLinks')
@@ -867,6 +868,7 @@ function App() {
       { label: '考勤数据源', url: '' },
     ]
   })
+  const [settingsDraft, setSettingsDraft] = useState([])
   const [showSettings, setShowSettings] = useState(false)
   const [showMatch, setShowMatch] = useState(false)
   const [showAccountLink, setShowAccountLink] = useState(false)
@@ -972,17 +974,7 @@ function App() {
     return groups.filter((group) => group.rows.length)
   }
   const groupedTimeline = groupTimelineRows(filteredTimeline)
-  const pickingKpi = buildSortingKpi(pickingReport)
-  const sortingKpi = buildSortingKpi(sortingReport)
   const packingKpi = buildSortingKpi(packingReport)
-  const activeKpi =
-    detailStageFilter === 'picking'
-      ? pickingKpi
-      : detailStageFilter === 'sorting'
-        ? sortingKpi
-        : detailStageFilter === 'packing'
-          ? packingKpi
-        : null
   const sortingMetaText = reportForDetails
     ? `${stageLabel}${t('校验')}: ${
         reportForDetails.meta.status === 'pass'
@@ -1057,29 +1049,6 @@ function App() {
     () => new Set(attendanceNames.map((name) => normalizeName(name)).filter(Boolean)),
     [attendanceNames]
   )
-  const detailAbnormal = useMemo(
-    () =>
-      detailRows.reduce(
-        (acc, row) => {
-          if (!row.attendanceName) return acc
-          if (!attendanceNameSet.has(normalizeName(row.attendanceName))) return acc
-          const ratio = calcWorkRatioPercent(row.ewhHours, row.attendanceHours)
-          const role = getWhitelistRole(row)
-          const forcedIssue = role === '异常'
-          if (isWhitelistExempt(role)) return acc
-          const matchIssue =
-            hasAttendanceData && (!row.attendanceMatched || row.attendanceHours <= 0)
-          const ratioIssue = ratio !== null && (ratio < 75 || ratio > 100)
-          if (forcedIssue) acc.total += 1
-          if (matchIssue) acc.unmatched += 1
-          if (ratioIssue) acc.lowRatio += 1
-          if (matchIssue || ratioIssue) acc.total += 1
-          return acc
-        },
-        { total: 0, unmatched: 0, lowRatio: 0 }
-      ),
-    [detailRows, attendanceNameSet, hasAttendanceData, whitelistRoleMap]
-  )
   const workNames = useMemo(
     () =>
       Array.from(
@@ -1149,23 +1118,47 @@ function App() {
     [unmatchedNames]
   )
   const accountLinkPanelNames = useMemo(() => {
-    const linked = attendanceNames.filter((name) => Boolean(accountLinkMap[name]))
+    const mapForPanel = showAccountLink ? accountLinkDraftMap : accountLinkMap
+    const linked = attendanceNames.filter((name) => Boolean(mapForPanel[name]))
     const unresolved = attendanceNames.filter((name) => {
-      if (accountLinkMap[name]) return false
+      if (mapForPanel[name]) return false
       const key = normalizeName(name)
       return key && !workKeySet.has(key)
     })
     return Array.from(new Set([...unresolved, ...linked])).sort((a, b) =>
       a.localeCompare(b, 'zh-Hans-CN')
     )
-  }, [attendanceNames, accountLinkMap, workKeySet])
-  const accountLinkSearchKey = useMemo(() => normalizeName(accountLinkSearch), [accountLinkSearch])
+  }, [attendanceNames, accountLinkMap, accountLinkDraftMap, showAccountLink, workKeySet])
+  const debouncedAccountLinkSearch = useDebouncedValue(accountLinkSearch, 180)
+  const accountLinkSearchKey = useMemo(
+    () => normalizeName(debouncedAccountLinkSearch),
+    [debouncedAccountLinkSearch]
+  )
   const filteredAccountLinkPanelNames = useMemo(() => {
     if (!accountLinkSearchKey) return accountLinkPanelNames
     return accountLinkPanelNames.filter((name) =>
       normalizeName(name).includes(accountLinkSearchKey)
     )
   }, [accountLinkPanelNames, accountLinkSearchKey])
+  const accountLinkRenderNames = useMemo(() => {
+    const base =
+      selectedMatchName && filteredAccountLinkPanelNames.includes(selectedMatchName)
+        ? [selectedMatchName]
+        : filteredAccountLinkPanelNames
+    if (accountLinkSearchKey || selectedMatchName) return base
+    return base.slice(0, 160)
+  }, [filteredAccountLinkPanelNames, selectedMatchName, accountLinkSearchKey])
+  const accountLinkHiddenCount = useMemo(() => {
+    if (accountLinkSearchKey || selectedMatchName) return 0
+    return Math.max(0, filteredAccountLinkPanelNames.length - accountLinkRenderNames.length)
+  }, [filteredAccountLinkPanelNames, accountLinkRenderNames, selectedMatchName, accountLinkSearchKey])
+  const accountLinkOptionList = useMemo(() => {
+    const merged = new Set(accountLinkOptions)
+    Object.values(showAccountLink ? accountLinkDraftMap : accountLinkMap).forEach((value) => {
+      if (value) merged.add(value)
+    })
+    return Array.from(merged).sort((a, b) => a.localeCompare(b, locale))
+  }, [accountLinkOptions, accountLinkMap, accountLinkDraftMap, showAccountLink, locale])
   const filteredDetailRows = useMemo(
     () =>
       detailRows.filter((person) => {
@@ -1783,27 +1776,79 @@ function App() {
     }
   }
 
+  const openSettingsPanel = () => {
+    setSettingsDraft(quickLinks.map((item) => ({ ...item })))
+    setShowSettings(true)
+  }
+
+  const closeSettingsPanel = () => {
+    setQuickLinks(
+      (settingsDraft.length ? settingsDraft : quickLinks).map((item) => ({
+        label: item?.label || '',
+        url: item?.url || '',
+      }))
+    )
+    setShowSettings(false)
+  }
+
   const updateQuickLink = (index, field, value) => {
-    setQuickLinks((prev) =>
+    setSettingsDraft((prev) =>
       prev.map((item, i) => (i === index ? { ...item, [field]: value } : item))
     )
   }
 
-  const updateAccountLinkMap = async (sourceName, targetName) => {
-    setAccountLinkMap((prev) => {
-      const next = { ...prev }
-      if (!targetName) {
-        delete next[sourceName]
-        return next
-      }
-      Object.keys(next).forEach((key) => {
-        if (next[key] === targetName && key !== sourceName) {
-          delete next[key]
-        }
-      })
-      next[sourceName] = targetName
+  const applyAccountLinkChange = (prev, sourceName, targetName) => {
+    const next = { ...prev }
+    if (!targetName) {
+      delete next[sourceName]
       return next
+    }
+    Object.keys(next).forEach((key) => {
+      if (next[key] === targetName && key !== sourceName) delete next[key]
     })
+    next[sourceName] = targetName
+    return next
+  }
+
+  const openAccountLinkPanel = () => {
+    setSelectedMatchName('')
+    setAccountLinkSearch('')
+    setAccountLinkDraftMap({ ...accountLinkMap })
+    setShowAccountLink(true)
+  }
+
+  const closeAccountLinkPanel = async () => {
+    const previous = accountLinkMap
+    const next = accountLinkDraftMap
+    setAccountLinkMap(next)
+    setShowAccountLink(false)
+    const changedSources = Array.from(
+      new Set([...Object.keys(previous), ...Object.keys(next)])
+    ).filter((sourceName) => (previous[sourceName] || '') !== (next[sourceName] || ''))
+    if (!changedSources.length) return
+    await Promise.all(
+      changedSources.map((sourceName) => {
+        const targetName = next[sourceName] || ''
+        if (!targetName) {
+          return fetch(`/api/account-links?sourceName=${encodeURIComponent(sourceName)}`, {
+            method: 'DELETE',
+          }).catch(() => null)
+        }
+        return fetch('/api/account-links', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sourceName, targetName }),
+        }).catch(() => null)
+      })
+    )
+  }
+
+  const updateAccountLinkDraft = (sourceName, targetName) => {
+    setAccountLinkDraftMap((prev) => applyAccountLinkChange(prev, sourceName, targetName))
+  }
+
+  const updateAccountLinkMap = async (sourceName, targetName) => {
+    setAccountLinkMap((prev) => applyAccountLinkChange(prev, sourceName, targetName))
     try {
       if (!targetName) {
         await fetch(`/api/account-links?sourceName=${encodeURIComponent(sourceName)}`, {
@@ -2741,7 +2786,7 @@ function App() {
         <nav className="topnav__links">
           {quickLinks.slice(0, 4).map((item, index) => (
             <a
-              key={`${item.label}-${index}`}
+              key={`top-link-${index}`}
               className={`topnav__link ${item.url ? '' : 'disabled'}`}
               href={item.url || '#'}
               target="_blank"
@@ -2809,11 +2854,7 @@ function App() {
         <button
           type="button"
           className="topnav__detail"
-          onClick={() => {
-            setSelectedMatchName('')
-            setAccountLinkSearch('')
-            setShowAccountLink(true)
-          }}
+          onClick={openAccountLinkPanel}
         >
           <Icon name="link" /> <span style={{ marginLeft: 8 }}>{t('账号关联')}</span>
         </button>
@@ -2826,7 +2867,7 @@ function App() {
         >
           <Icon name="user" /> <span style={{ marginLeft: 8 }}>{t('人员明细')}</span>
         </button>
-        <button type="button" className="topnav__settings" onClick={() => setShowSettings(true)}>
+        <button type="button" className="topnav__settings" onClick={openSettingsPanel}>
           <Icon name="settings" /> <span style={{ marginLeft: 8 }}>{t('设置')}</span>
         </button>
       </div>
@@ -3154,52 +3195,6 @@ function App() {
         )}
       </section>
 
-      <section className="kpi-row">
-        <div className="kpi-card">
-          <h3>{t('有效工时占比')}</h3>
-          {detailStageFilter === 'all' ? (
-            <>
-              <strong>{sortingKpi ? `${Math.round(sortingKpi.ratio * 100)}%` : '--'}</strong>
-              <small>{t('分拨')}</small>
-              <strong>{pickingKpi ? `${Math.round(pickingKpi.ratio * 100)}%` : '--'}</strong>
-              <small>{t('拣货')}</small>
-            </>
-          ) : (
-            <>
-              <strong>{activeKpi ? `${Math.round(activeKpi.ratio * 100)}%` : '--'}</strong>
-              <small>{t('有效工时 / 基准工时(8h)')}</small>
-            </>
-          )}
-        </div>
-        <div className="kpi-card">
-          <h3>{t('人效均值')}</h3>
-          {detailStageFilter === 'all' ? (
-            <>
-              <strong>{sortingKpi ? sortingKpi.avgUph.toFixed(1) : '--'}</strong>
-              <small>{t('分拨 单 / 小时')}</small>
-              <strong>{pickingKpi ? pickingKpi.avgUph.toFixed(1) : '--'}</strong>
-              <small>{t('拣货 单 / 小时')}</small>
-            </>
-          ) : (
-            <>
-              <strong>{activeKpi ? activeKpi.avgUph.toFixed(1) : '--'}</strong>
-              <small>{activeKpi ? `${t(stageLabel)} ${t('单 / 小时')}` : t('单 / 小时')}</small>
-            </>
-          )}
-        </div>
-        <div className="kpi-card">
-          <h3>{t('异常提示')}</h3>
-          <>
-            <strong>{detailAbnormal.total}</strong>
-            <small>{t('异常人员')}</small>
-            <strong>{detailAbnormal.lowRatio}</strong>
-            <small>{t('占比低于 75%')}</small>
-            <strong>{detailAbnormal.unmatched}</strong>
-            <small>{t('账号未匹配')}</small>
-          </>
-        </div>
-      </section>
-
       <section className="table-section" id="detailSection">
         <div className="table-header">
           <h2>{t('人员明细')}</h2>
@@ -3473,7 +3468,7 @@ function App() {
                 return (
                   <div key={person.name} className={`table-row ${rowState}`}>
                     <div className="person" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <strong>{person.name}</strong>
+                      <strong>{toDisplayName(person.name)}</strong>
                       <span
                         className={`status-tag ${statusTone}`}
                         role={canOpenMatch ? 'button' : undefined}
@@ -3708,17 +3703,21 @@ function App() {
       )}
 
       {showSettings && (
-        <div className="settings-backdrop" onClick={() => setShowSettings(false)}>
-          <div className="settings-panel" onClick={(event) => event.stopPropagation()}>
+        <div className="settings-backdrop">
+          <div
+            className="settings-panel"
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
+          >
             <div className="settings-header">
               <h3>{t('数据入口设置')}</h3>
-              <button type="button" onClick={() => setShowSettings(false)}>
+              <button type="button" onClick={closeSettingsPanel}>
                 {t('关闭')}
               </button>
             </div>
             <div className="settings-grid">
-              {quickLinks.map((item, index) => (
-                <div key={`${item.label}-${index}`} className="settings-item">
+              {(settingsDraft.length ? settingsDraft : quickLinks).map((item, index) => (
+                <div key={`quick-link-${index}`} className="settings-item">
                   <input
                     className="settings-input"
                     type="text"
@@ -3756,7 +3755,7 @@ function App() {
                   </button>
                 </div>
               </div>
-              <button type="button" onClick={() => setShowSettings(false)}>
+              <button type="button" onClick={closeSettingsPanel}>
                 {t('完成')}
               </button>
             </div>
@@ -3768,13 +3767,17 @@ function App() {
         <div
           className="settings-backdrop"
           onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setShowAccountLink(false)
+            if (event.target === event.currentTarget) closeAccountLinkPanel()
           }}
         >
-          <div className="settings-panel match-panel" onClick={(event) => event.stopPropagation()}>
+          <div
+            className="settings-panel match-panel"
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
+          >
             <div className="settings-header">
               <h3>{t('账号关联（全局）')}</h3>
-              <button type="button" onClick={() => setShowAccountLink(false)}>
+              <button type="button" onClick={closeAccountLinkPanel}>
                 {t('关闭')}
               </button>
             </div>
@@ -3786,6 +3789,11 @@ function App() {
               placeholder={t('搜索账号')}
             />
             <div className="match-list">
+              <datalist id="account-link-opts-global">
+                {accountLinkOptionList.map((att) => (
+                  <option key={`account-opt-${att}`} value={att} />
+                ))}
+              </datalist>
               {selectedMatchName && !filteredAccountLinkPanelNames.includes(selectedMatchName) ? (
                 <div className="match-empty">{t('请选择考勤账号进行匹配')}</div>
               ) : null}
@@ -3794,34 +3802,24 @@ function App() {
               ) : filteredAccountLinkPanelNames.length === 0 ? (
                 <div className="match-empty">{t('当前没有需要匹配的姓名。')}</div>
               ) : (
-                (selectedMatchName && filteredAccountLinkPanelNames.includes(selectedMatchName)
-                  ? [selectedMatchName]
-                  : filteredAccountLinkPanelNames
-                ).map((name) => {
-                  const current = accountLinkMap[name] || ''
+                accountLinkRenderNames.map((name) => {
+                  const current = accountLinkDraftMap[name] || ''
                   return (
                     <div key={`al-${name}`} className="match-item">
                       <div className="match-name">{name}</div>
                       <div className="match-select-wrap">
                         <input
                           className="match-select"
-                          list={`account-link-opts-${name}`}
+                          list="account-link-opts-global"
                           value={current}
-                          onChange={(event) => updateAccountLinkMap(name, event.target.value)}
+                          onChange={(event) => updateAccountLinkDraft(name, event.target.value)}
                           placeholder={t('选择工作账号')}
                         />
-                        <datalist id={`account-link-opts-${name}`}>
-                          {accountLinkOptions
-                            .concat(current && !accountLinkOptions.includes(current) ? [current] : [])
-                            .map((att) => (
-                              <option key={`${name}-${att}`} value={att} />
-                            ))}
-                        </datalist>
                       </div>
                       <button
                         type="button"
                         className="match-clear"
-                        onClick={() => updateAccountLinkMap(name, '')}
+                        onClick={() => updateAccountLinkDraft(name, '')}
                       >
                         {t('取消匹配')}
                       </button>
@@ -3829,6 +3827,9 @@ function App() {
                   )
                 })
               )}
+              {accountLinkHiddenCount > 0 ? (
+                <div className="match-empty">{`仅显示前 ${accountLinkRenderNames.length} 条，请先搜索以缩小范围（剩余 ${accountLinkHiddenCount} 条）`}</div>
+              ) : null}
             </div>
             <div className="settings-footer">
               <span>{t('匹配全局生效')}</span>
@@ -3837,6 +3838,7 @@ function App() {
                 onClick={() => {
                   if (!confirm(t('确认清空所有手动匹配？'))) return
                   resetAccountLinks()
+                  setAccountLinkDraftMap({})
                 }}
               >
                 {t('清空匹配')}
@@ -4121,9 +4123,20 @@ const normalizeName = (name) => {
   const raw = String(name || '')
   const withoutParen = raw.replace(/\s*\([^)]*\)\s*$/g, '')
   const lowered = withoutParen.toLowerCase()
-  const lettersOnly = lowered.replace(/[^a-z\u00c0-\u024f\u4e00-\u9fff]+/g, ' ')
+  const asciiFolded = lowered.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  const lettersOnly = asciiFolded.replace(/[^a-z\u4e00-\u9fff]+/g, ' ')
   const noDigits = lettersOnly.replace(/\b\d+\b/g, ' ')
   return noDigits.replace(/\s+/g, ' ').trim()
+}
+
+const toDisplayName = (name) => {
+  let value = String(name || '').trim()
+  if (!value) return value
+  // Remove trailing account-like suffixes in parentheses, keep plain employee name.
+  while (/\s*\([^)]*\d[^)]*\)\s*$/.test(value)) {
+    value = value.replace(/\s*\([^)]*\d[^)]*\)\s*$/, '').trim()
+  }
+  return value
 }
 
 const normalizeWorkKey = (name) => {
@@ -4180,6 +4193,40 @@ const diceSimilarity = (a, b) => {
   return (2 * inter) / (aa.length + bb.length)
 }
 
+const levenshteinDistance = (a, b) => {
+  const left = String(a || '')
+  const right = String(b || '')
+  const m = left.length
+  const n = right.length
+  if (!m) return n
+  if (!n) return m
+  const prev = new Array(n + 1)
+  const cur = new Array(n + 1)
+  for (let j = 0; j <= n; j += 1) prev[j] = j
+  for (let i = 1; i <= m; i += 1) {
+    cur[0] = i
+    for (let j = 1; j <= n; j += 1) {
+      const cost = left[i - 1] === right[j - 1] ? 0 : 1
+      cur[j] = Math.min(
+        prev[j] + 1,
+        cur[j - 1] + 1,
+        prev[j - 1] + cost
+      )
+    }
+    for (let j = 0; j <= n; j += 1) prev[j] = cur[j]
+  }
+  return prev[n]
+}
+
+const levenshteinSimilarity = (a, b) => {
+  const left = String(a || '').replace(/\s+/g, '')
+  const right = String(b || '').replace(/\s+/g, '')
+  if (!left || !right) return 0
+  if (left === right) return 1
+  const dist = levenshteinDistance(left, right)
+  return 1 - dist / Math.max(left.length, right.length)
+}
+
 const nameSimilarityScore = (left, right) => {
   const a = normalizeName(left)
   const b = normalizeName(right)
@@ -4193,9 +4240,11 @@ const nameSimilarityScore = (left, right) => {
   const jaccard = tokenJaccard(aTokens, bTokens)
   const dice = diceSimilarity(a, b)
   const sortedDice = diceSimilarity(aSorted, bSorted)
+  const edit = levenshteinSimilarity(a, b)
+  const sortedEdit = levenshteinSimilarity(aSorted, bSorted)
   const prefixBoost =
     (a.startsWith(b) || b.startsWith(a)) && Math.min(a.length, b.length) >= 4 ? 0.08 : 0
-  return Math.min(1, Math.max(jaccard, dice, sortedDice) + prefixBoost)
+  return Math.min(1, Math.max(jaccard, dice, sortedDice, edit, sortedEdit) + prefixBoost)
 }
 
 const buildDetailRows = (
@@ -4367,7 +4416,6 @@ const buildDetailRows = (
     const row = ensureRow(key, baseName)
     row.attendanceName = baseName
     if (work) attachWork(row, work)
-    if (work && baseName) row.name = `${baseName}(${work})`
   })
 
   const workByKey = new Map()
@@ -4390,7 +4438,7 @@ const buildDetailRows = (
     operators.forEach((operator) => attachWork(row, operator))
   })
 
-  // 自动模糊匹配：相似度>=0.8且明显高于次优候选时自动映射
+  // 自动模糊匹配：支持轻微拼写误差（如 Vanessa/Vanesa）
   const fuzzyCandidates = []
   workData.forEach((_, operator) => {
     if (linkedWork.has(operator)) return
@@ -4407,7 +4455,13 @@ const buildDetailRows = (
         second = { key: cand.key, name: cand.display, score }
       }
     })
-    if (best && best.score >= 0.8 && (!second || best.score - second.score >= 0.08)) {
+    if (
+      best &&
+      (
+        best.score >= 0.9 ||
+        (best.score >= 0.82 && (!second || best.score - second.score >= 0.03))
+      )
+    ) {
       fuzzyCandidates.push({ operator, best })
     }
   })
@@ -4433,7 +4487,6 @@ const buildDetailRows = (
     const row = ensureRow(baseKey, baseName)
     if (mappedName && !row.attendanceName) row.attendanceName = mappedName
     attachWork(row, operator)
-    if (mappedName && baseName) row.name = `${baseName}(${operator})`
   })
 
   if (combinedReport?.meta?.windowStart) {
