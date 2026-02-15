@@ -241,6 +241,7 @@ const TRANSLATIONS = {
     '时效（高→低）': 'UPH (desc)',
     '全天时效（高→低）': 'Day UPH (desc)',
     '开始工作': 'Start',
+    '第一枪': 'First Gun',
     '有效工时': 'EWH',
     '工时': 'Hours',
     '加班': 'OT',
@@ -1038,6 +1039,19 @@ function App() {
     }),
     [pickingReport, sortingReport, packingReport, combinedReport, effectiveNameMap]
   )
+  const attendanceStartMap = useMemo(() => {
+    const map = new Map()
+    attendanceWindowMap.forEach((windows, key) => {
+      const earliest = (windows || []).reduce((min, seg) => {
+        const t = Number(seg?.start)
+        return Number.isFinite(t) && t < min ? t : min
+      }, Number.POSITIVE_INFINITY)
+      if (Number.isFinite(earliest) && earliest !== Number.POSITIVE_INFINITY) {
+        map.set(key, earliest)
+      }
+    })
+    return map
+  }, [attendanceWindowMap])
   const hasAttendanceData = (attendanceReport?.stats || []).length > 0
   const attendanceNames = useMemo(
     () => Array.from(
@@ -1195,14 +1209,7 @@ function App() {
     const rows = filteredDetailRows.slice()
     const dir = detailSortDir === 'asc' ? 1 : -1
 
-    const startMap =
-      detailStageFilter === 'picking'
-        ? startTimeMaps.picking
-        : detailStageFilter === 'sorting'
-          ? startTimeMaps.sorting
-          : detailStageFilter === 'packing'
-            ? startTimeMaps.packing
-            : startTimeMaps.all
+    const startMap = startTimeMaps.all
 
     const getStartMs = (person) => {
       const startKey = person.attendanceName
@@ -1214,6 +1221,20 @@ function App() {
             : normalizeName(person.name)
       const ms = startMap.get(startKey)
       return Number.isFinite(ms) ? ms : null
+    }
+
+    const getFirstGunMinutes = (person) => {
+      const startKey = person.attendanceName
+        ? normalizeName(person.attendanceName)
+        : person.workKey
+          ? person.workKey
+          : person.sources && person.sources.size
+            ? normalizeWorkKey(Array.from(person.sources)[0])
+            : normalizeName(person.name)
+      const startMs = getStartMs(person)
+      const attendanceStartMs = attendanceStartMap.get(startKey)
+      if (!Number.isFinite(startMs) || !Number.isFinite(attendanceStartMs)) return null
+      return Math.max(0, Math.round((startMs - attendanceStartMs) / 60000))
     }
 
     const getUnits = (person) => {
@@ -1258,7 +1279,7 @@ function App() {
         case 'name':
           return person.name || ''
         case 'start':
-          return getStartMs(person)
+          return getFirstGunMinutes(person)
         case 'ewh':
           return Number(person.ewhHours || 0)
         case 'hours':
@@ -1285,6 +1306,15 @@ function App() {
       if (detailSortKey === 'name') {
         return String(av).localeCompare(String(bv), locale, { sensitivity: 'base' }) * dir
       }
+      if (detailSortKey === 'start') {
+        if (av == null && bv == null) {
+          return String(a.name || '').localeCompare(String(b.name || ''), locale, {
+            sensitivity: 'base',
+          })
+        }
+        if (av == null) return 1
+        if (bv == null) return -1
+      }
 
       const an = av == null ? Number.NEGATIVE_INFINITY : Number(av)
       const bn = bv == null ? Number.NEGATIVE_INFINITY : Number(bv)
@@ -1297,7 +1327,7 @@ function App() {
     })
 
     return rows
-  }, [filteredDetailRows, detailSortKey, detailSortDir, detailStageFilter, startTimeMaps, locale])
+  }, [filteredDetailRows, detailSortKey, detailSortDir, detailStageFilter, startTimeMaps, attendanceStartMap, locale])
 
   const fetchUploadState = async (dateKey) => {
     if (!dateKey) return
@@ -2503,14 +2533,7 @@ function App() {
       return
     }
 
-    const startMap =
-      detailStageFilter === 'picking'
-        ? startTimeMaps.picking
-        : detailStageFilter === 'sorting'
-          ? startTimeMaps.sorting
-          : detailStageFilter === 'packing'
-            ? startTimeMaps.packing
-            : startTimeMaps.all
+    const startMap = startTimeMaps.all
 
     const toStartLabel = (person) => {
       const startKey = person.attendanceName
@@ -2521,9 +2544,9 @@ function App() {
             ? normalizeWorkKey(Array.from(person.sources)[0])
             : normalizeName(person.name)
       const startMs = startMap.get(startKey)
-      return Number.isFinite(startMs)
-        ? new Date(startMs).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
-        : ''
+      const attendanceStartMs = attendanceStartMap.get(startKey)
+      if (!Number.isFinite(startMs) || !Number.isFinite(attendanceStartMs)) return ''
+      return Math.max(0, Math.round((startMs - attendanceStartMs) / 60000))
     }
 
     const getUnitsForStage = (person) => {
@@ -2625,7 +2648,7 @@ function App() {
 
     const headers = [
       t('人员'),
-      t('开始工作'),
+      t('第一枪'),
       t('有效工时'),
       t('工时'),
       t('加班'),
@@ -3270,7 +3293,7 @@ function App() {
                 }}
               >
                 <option value="name">{t('名字')}</option>
-                <option value="start">{t('开始工作')}</option>
+                <option value="start">{t('第一枪')}</option>
                 <option value="ewh">{t('有效工时')}</option>
                 <option value="hours">{t('工时')}</option>
                 <option value="ot">{t('加班')}</option>
@@ -3300,7 +3323,7 @@ function App() {
           <div className="table">
             <div className="table-row table-head">
               <span>{t('名字')}</span>
-              <span>{t('开始工作')}</span>
+              <span>{t('第一枪')}</span>
               <span>{t('有效工时')}</span>
               <span>{t('工时')}</span>
               <span>{t('加班')}</span>
@@ -3438,14 +3461,7 @@ function App() {
                 else if (ratioIssue) rowState = 'row-error'
                 const sourceName =
                   person.sources && person.sources.size ? Array.from(person.sources)[0] : person.name
-                const startMap =
-                  detailStageFilter === 'picking'
-                    ? startTimeMaps.picking
-                    : detailStageFilter === 'sorting'
-                      ? startTimeMaps.sorting
-                      : detailStageFilter === 'packing'
-                        ? startTimeMaps.packing
-                        : startTimeMaps.all
+                const startMap = startTimeMaps.all
                 const startKey = person.attendanceName
                   ? normalizeName(person.attendanceName)
                   : person.workKey
@@ -3454,9 +3470,12 @@ function App() {
                       ? normalizeWorkKey(Array.from(person.sources)[0])
                       : normalizeName(person.name)
                 const startMs = startMap.get(startKey)
-                const startLabel = Number.isFinite(startMs)
-                  ? new Date(startMs).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
-                  : '--'
+                const attendanceStartMs = attendanceStartMap.get(startKey)
+                const firstGunMinutes =
+                  Number.isFinite(startMs) && Number.isFinite(attendanceStartMs)
+                    ? Math.max(0, Math.round((startMs - attendanceStartMs) / 60000))
+                    : null
+                const startLabel = Number.isFinite(firstGunMinutes) ? `${firstGunMinutes}m` : '--'
                 const shiftLabel = person.shiftType || ''
                 const shiftTone =
                   shiftLabel.includes('早') || shiftLabel.includes('白')
