@@ -1041,29 +1041,63 @@ function App() {
     const overlapMs = (aStart, aEnd, bStart, bEnd) =>
       Math.max(0, Math.min(aEnd, bEnd) - Math.max(aStart, bStart))
 
-    let dayUnits = 0
-    let nightUnits = 0
+    let dayUnitsRaw = 0
+    let nightUnitsRaw = 0
     let dayHours = 0
     let nightHours = 0
 
-    // 件数：直接按打包 work 片段与白/夜时间窗重叠分摊，避免姓名匹配导致错分。
-    Object.values(packingReport?.segments || {}).forEach((segs) => {
+    // 件数：按每人 totalUnits 分配到白/夜，避免 segment 丢失孤立扫描点导致总数对不上。
+    const attendanceFirstStartByKey = new Map()
+    Object.entries(attendanceReport?.segments || {}).forEach(([name, segs]) => {
+      const key = normalizeName(name)
+      if (!key) return
+      const first = (segs || []).reduce((min, seg) => {
+        if (seg?.type !== 'attendance') return min
+        const t = new Date(seg.start).getTime()
+        return Number.isFinite(t) && t < min ? t : min
+      }, Number.POSITIVE_INFINITY)
+      if (Number.isFinite(first) && first !== Number.POSITIVE_INFINITY) {
+        const prev = attendanceFirstStartByKey.get(key)
+        if (!Number.isFinite(prev) || first < prev) attendanceFirstStartByKey.set(key, first)
+      }
+    })
+    ;(packingReport?.stats || []).forEach((stat) => {
+      const totalUnits = Number(stat?.totalUnits || 0)
+      if (!(totalUnits > 0)) return
+      const operator = String(stat?.operator || '')
+      const segs = packingReport?.segments?.[operator] || []
+      let dayMsTotal = 0
+      let nightMsTotal = 0
+      let firstWorkStart = Number.POSITIVE_INFINITY
       ;(segs || []).forEach((seg) => {
         if (seg?.type !== 'work') return
-        const units = Number(seg.units || 0)
-        if (!(units > 0)) return
         const segStart = new Date(seg.start).getTime()
         const segEnd = new Date(seg.end).getTime()
         if (!Number.isFinite(segStart) || !Number.isFinite(segEnd) || segEnd <= segStart) return
+        if (segStart < firstWorkStart) firstWorkStart = segStart
         const start = Math.max(segStart, windowStart)
         const end = Math.min(segEnd, windowEnd)
         if (end <= start) return
-        const duration = end - start
         const dayMs = overlapMs(start, end, windowStart, nightStart)
         const nightMs = overlapMs(start, end, nightStart, windowEnd)
-        if (dayMs > 0) dayUnits += units * (dayMs / duration)
-        if (nightMs > 0) nightUnits += units * (nightMs / duration)
+        if (dayMs > 0) dayMsTotal += dayMs
+        if (nightMs > 0) nightMsTotal += nightMs
       })
+      const msSum = dayMsTotal + nightMsTotal
+      if (msSum > 0) {
+        dayUnitsRaw += totalUnits * (dayMsTotal / msSum)
+        nightUnitsRaw += totalUnits * (nightMsTotal / msSum)
+        return
+      }
+      const key = normalizeName(operator)
+      const fallbackStart = Number.isFinite(firstWorkStart)
+        ? firstWorkStart
+        : attendanceFirstStartByKey.get(key)
+      if (Number.isFinite(fallbackStart) && fallbackStart >= nightStart) {
+        nightUnitsRaw += totalUnits
+      } else {
+        dayUnitsRaw += totalUnits
+      }
     })
 
     // 工时：直接按考勤 attendance 片段与白/夜时间窗重叠累加（包含白名单，不做过滤）。
@@ -1082,9 +1116,16 @@ function App() {
         if (nightMs > 0) nightHours += nightMs / 3600000
       })
     })
+    // 让白+夜严格对齐全天打包总件数（避免四舍五入造成差 1）。
+    const totalUnitsAll = Number(packingReport?.kpi?.totalUnitsAll || 0)
+    const dayUnits = Math.round(dayUnitsRaw)
+    const nightUnits =
+      totalUnitsAll > 0
+        ? Math.max(0, totalUnitsAll - dayUnits)
+        : Math.round(nightUnitsRaw)
     const dayUph = dayHours > 0 ? dayUnits / dayHours : null
     const nightUph = nightHours > 0 ? nightUnits / nightHours : null
-    return { dayUnits: Math.round(dayUnits), nightUnits: Math.round(nightUnits), dayHours, nightHours, dayUph, nightUph }
+    return { dayUnits, nightUnits, dayHours, nightHours, dayUph, nightUph }
   }, [packingReport, attendanceReport, selectedDate])
   const detailTeams = useMemo(
     () => Array.from(new Set(detailRows.flatMap((row) => Array.from(row.groups)))),
