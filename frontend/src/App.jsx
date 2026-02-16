@@ -3092,9 +3092,7 @@ function App() {
 
       <header className="hero">
         <div className="hero__content">
-          <p className="eyebrow">{t('出库人效看板')}</p>
           <h1>{t('出库人效看板')}</h1>
-          <p className="subtitle">{t('选中日期')}: {selectedDateLabel}</p>
           <div className="hero__meta">
             <div className="meta-card">
               <span>{t('今日有效工时')}</span>
@@ -3117,7 +3115,6 @@ function App() {
             <div className="meta-card">
               <span>{t('出库总工时')}</span>
               <strong>{attendanceReport ? formatHours(attendanceReport.kpi.totalEwhHoursAll) : '--'}</strong>
-              <small>{attendanceReport ? t('ObPunch导出') : t('等待ObPunch数据')}</small>
             </div>
           </div>
           <div className="kpi-row kpi-row--compact">
