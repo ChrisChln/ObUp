@@ -1502,6 +1502,23 @@ button.ghost::before,
   box-shadow: 0 0 0 4px rgba(17, 24, 39, 0.12);
 }
 
+.detail-min-input {
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  padding: 8px 12px;
+  width: 110px;
+  background: rgba(255, 255, 255, 0.85);
+  font-weight: 600;
+  color: var(--text);
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.detail-min-input:focus {
+  outline: none;
+  border-color: rgba(17, 24, 39, 0.4);
+  box-shadow: 0 0 0 4px rgba(17, 24, 39, 0.12);
+}
+
 .team-select {
   border-radius: 999px;
   border: 1px solid var(--line);

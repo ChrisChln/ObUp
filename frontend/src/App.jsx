@@ -300,6 +300,9 @@ const TRANSLATIONS = {
     '岗位时间线': 'Role Timeline',
     '加载中': 'Loading',
     '全部班组': 'All teams',
+    '全部班次': 'All shifts',
+    '早班': 'Day shift',
+    '晚班': 'Night shift',
     '暂无人效数据': 'No efficiency data',
     '暂无数据': 'No data',
     '全部': 'All',
@@ -463,6 +466,31 @@ const getDominantGroupLabel = (person, t) => {
   if (key === 'sorting') return t('分拨')
   return '--'
 }
+
+const SHIFT_BOUNDARY_BY_STAGE = {
+  picking: { hour: 15, minute: 30 },
+  sorting: { hour: 16, minute: 30 },
+  packing: { hour: 16, minute: 30 },
+}
+
+const getStageShiftBoundaryMs = (windowStartMs, stageKey) => {
+  if (!Number.isFinite(windowStartMs)) return Number.NaN
+  const stage = SHIFT_BOUNDARY_BY_STAGE[stageKey] ? stageKey : 'packing'
+  const boundary = SHIFT_BOUNDARY_BY_STAGE[stage]
+  const start = new Date(windowStartMs)
+  return new Date(
+    start.getFullYear(),
+    start.getMonth(),
+    start.getDate(),
+    boundary.hour,
+    boundary.minute,
+    0,
+    0
+  ).getTime()
+}
+
+const calcOverlapMs = (aStart, aEnd, bStart, bEnd) =>
+  Math.max(0, Math.min(aEnd, bEnd) - Math.max(aStart, bStart))
 
 const mergeIntervals = (intervals) => {
   if (!intervals.length) return []
@@ -864,8 +892,10 @@ function App() {
   const [stageFilter, setStageFilter] = useState('all')
   const [detailStageFilter, setDetailStageFilter] = useState('all')
   const [teamFilter, setTeamFilter] = useState('all')
+  const [detailShiftFilter, setDetailShiftFilter] = useState('all')
   const [detailOnlyAbnormal, setDetailOnlyAbnormal] = useState(false)
   const [detailSearch, setDetailSearch] = useState('')
+  const [detailMinUnits, setDetailMinUnits] = useState('')
   const [detailSortKey, setDetailSortKey] = useState('score')
   const [detailSortDir, setDetailSortDir] = useState('desc')
   const [uploadState, setUploadState] = useState({})
@@ -1040,9 +1070,8 @@ function App() {
     if (!Number.isFinite(windowStart) || !Number.isFinite(windowEnd)) {
       return { dayUnits: 0, nightUnits: 0, dayHours: 0, nightHours: 0, dayUph: null, nightUph: null }
     }
-    const nightStart = windowStart + 10.5 * 60 * 60 * 1000 // 15:30（你提到夜班有 15:30/16:30 两种开班）
-    const overlapMs = (aStart, aEnd, bStart, bEnd) =>
-      Math.max(0, Math.min(aEnd, bEnd) - Math.max(aStart, bStart))
+    // 打包白夜班切分按 16:30。
+    const nightStart = getStageShiftBoundaryMs(windowStart, 'packing')
 
     let dayUnitsRaw = 0
     let nightUnitsRaw = 0
@@ -1081,8 +1110,8 @@ function App() {
         const start = Math.max(segStart, windowStart)
         const end = Math.min(segEnd, windowEnd)
         if (end <= start) return
-        const dayMs = overlapMs(start, end, windowStart, nightStart)
-        const nightMs = overlapMs(start, end, nightStart, windowEnd)
+        const dayMs = calcOverlapMs(start, end, windowStart, nightStart)
+        const nightMs = calcOverlapMs(start, end, nightStart, windowEnd)
         if (dayMs > 0) dayMsTotal += dayMs
         if (nightMs > 0) nightMsTotal += nightMs
       })
@@ -1113,8 +1142,8 @@ function App() {
         const start = Math.max(segStart, windowStart)
         const end = Math.min(segEnd, windowEnd)
         if (end <= start) return
-        const dayMs = overlapMs(start, end, windowStart, nightStart)
-        const nightMs = overlapMs(start, end, nightStart, windowEnd)
+        const dayMs = calcOverlapMs(start, end, windowStart, nightStart)
+        const nightMs = calcOverlapMs(start, end, nightStart, windowEnd)
         if (dayMs > 0) dayHours += dayMs / 3600000
         if (nightMs > 0) nightHours += nightMs / 3600000
       })
@@ -1146,7 +1175,7 @@ function App() {
       setIsFiltering(false)
     }, 260)
     return () => clearTimeout(id)
-  }, [debouncedDetailSearch, detailStageFilter, teamFilter, detailOnlyAbnormal])
+  }, [debouncedDetailSearch, detailStageFilter, teamFilter, detailShiftFilter, detailOnlyAbnormal, detailMinUnits])
   const whitelistRoleMap = useMemo(() => {
     const map = new Map()
     whitelist.forEach((entry) => {
@@ -1307,8 +1336,10 @@ function App() {
     return Array.from(merged).sort((a, b) => a.localeCompare(b, locale))
   }, [accountLinkOptions, accountLinkMap, accountLinkDraftMap, showAccountLink, locale])
   const filteredDetailRows = useMemo(
-    () =>
-      detailRows.filter((person) => {
+    () => {
+      const parsedMinUnits = Number(detailMinUnits)
+      const hasMinUnits = detailMinUnits !== '' && Number.isFinite(parsedMinUnits) && parsedMinUnits >= 0
+      return detailRows.filter((person) => {
         if (detailOnlyAbnormal) {
           if (!person.attendanceName) return false
           if (!attendanceNameSet.has(normalizeName(person.attendanceName))) return false
@@ -1327,6 +1358,22 @@ function App() {
         if (detailStageFilter === 'sorting' && !(person.groups.has('分拨') || person.hasSorted)) return false
         if (detailStageFilter === 'packing' && !(person.groups.has('打包') || person.hasPacked)) return false
         if (teamFilter !== 'all' && !person.groups.has(teamFilter)) return false
+        if (detailShiftFilter === 'day' && person.shiftType !== '早班') return false
+        if (detailShiftFilter === 'night' && person.shiftType !== '晚班') return false
+        if (hasMinUnits) {
+          const unitsForFilter =
+            detailStageFilter === 'picking'
+              ? Number(person.pickingUnits || 0)
+              : detailStageFilter === 'sorting'
+                ? Number(person.sortingUnits || 0)
+                : detailStageFilter === 'packing'
+                  ? Number(person.packingSingleUnits || 0) + Number(person.packingMultiUnits || 0)
+                  : Number(person.pickingUnits || 0) +
+                    Number(person.sortingUnits || 0) +
+                    Number(person.packingSingleUnits || 0) +
+                    Number(person.packingMultiUnits || 0)
+          if (unitsForFilter < parsedMinUnits) return false
+        }
         if (detailSearchNormalized) {
           const nameKey = normalizeName(person.name)
           const workKeyMatch =
@@ -1334,8 +1381,9 @@ function App() {
           if (!nameKey.includes(detailSearchNormalized) && !workKeyMatch) return false
         }
         return true
-      }),
-    [detailRows, detailOnlyAbnormal, attendanceNameSet, whitelistRoleMap, hasAttendanceData, detailStageFilter, teamFilter, detailSearchNormalized]
+      })
+    },
+    [detailRows, detailOnlyAbnormal, attendanceNameSet, whitelistRoleMap, hasAttendanceData, detailStageFilter, teamFilter, detailShiftFilter, detailSearchNormalized, detailMinUnits]
   )
 
   const sortedDetailRows = useMemo(() => {
@@ -1399,7 +1447,7 @@ function App() {
       return ewh > 0 ? units / ewh : null
     }
 
-    const getRatio = (person) => calcWorkRatioPercent(person.ewhHours, person.attendanceHours)
+    const getRatio = (person) => calcWorkRatioPercent(getEwh(person), person.attendanceHours)
 
     const getOvertime = (person) => {
       const h = Number(person.attendanceHours || 0)
@@ -1414,7 +1462,7 @@ function App() {
         case 'start':
           return getFirstGunMinutes(person)
         case 'ewh':
-          return Number(person.ewhHours || 0)
+          return getEwh(person)
         case 'hours':
           return Number(person.attendanceHours || 0)
         case 'ot':
@@ -1760,8 +1808,11 @@ function App() {
 
   useEffect(() => {
     setTeamFilter('all')
-    setDetailSearch('')
   }, [detailStageFilter, selectedDate])
+
+  useEffect(() => {
+    setDetailSearch('')
+  }, [selectedDate])
 
   useEffect(() => {
     localStorage.setItem('obup.quickLinks', JSON.stringify(quickLinks))
@@ -2630,7 +2681,7 @@ function App() {
       [t('记录数'), rows.length],
       [t('筛选条件'), `${teamFilter === 'all' ? t('全部班组') : t(teamFilter)} / ${t('仅异常')} ${detailOnlyAbnormal ? t('是') : t('否')}`],
       [t('件数'), rows.reduce((acc, row) => acc + getReportUnitsForStage(row), 0)],
-      [t('有效工时'), rows.reduce((acc, row) => acc + Number(row.ewhHours || 0), 0).toFixed(2)],
+      [t('有效工时'), rows.reduce((acc, row) => acc + getReportEwhForStage(row), 0).toFixed(2)],
     ]
       .map(([k, v]) => `<div class="card"><strong>${escapeHtml(k)}</strong><div>${escapeHtml(v)}</div></div>`)
       .join('')
@@ -2640,13 +2691,13 @@ function App() {
         const units = getReportUnitsForStage(person)
         const stageEwh = getReportEwhForStage(person)
         const eff = stageEwh > 0 ? units / stageEwh : null
-        const ratio = calcWorkRatioPercent(person.ewhHours, person.attendanceHours)
+        const ratio = calcWorkRatioPercent(stageEwh, person.attendanceHours)
         const dominantGroup = getDominantGroupLabel(person, t)
         return `<tr>
           <td>${escapeHtml(person.name || '--')}</td>
           <td>${escapeHtml(dominantGroup)}</td>
           <td>${escapeHtml(getReportStartLabel(person))}</td>
-          <td>${escapeHtml(Number(person.ewhHours || 0).toFixed(2))}</td>
+          <td>${escapeHtml(stageEwh.toFixed(2))}</td>
           <td>${escapeHtml(Number(person.attendanceHours || 0).toFixed(2))}</td>
           <td>${units}</td>
           <td>${escapeHtml(eff == null ? '--' : eff.toFixed(2))}</td>
@@ -2816,13 +2867,13 @@ function App() {
     const aoa = [headers]
     rows.forEach((person) => {
       const start = toStartLabel(person)
-      const ewh = Number(person.ewhHours || 0)
+      const ewh = getEwhForStage(person)
       const hours = Number(person.attendanceHours || 0)
       const ot = hours > 8 ? hours - 8 : hours ? 0 : ''
       const units = getUnitsForStage(person)
       const stageEwh = getEwhForStage(person)
       const eff = stageEwh > 0 ? units / stageEwh : ''
-      const ratioRaw = calcWorkRatioPercent(person.ewhHours, person.attendanceHours)
+      const ratioRaw = calcWorkRatioPercent(stageEwh, person.attendanceHours)
       const ratio = ratioRaw === null ? '' : ratioRaw
       const status = computeStatus(person)
       const score = typeof person.compositeScore === 'number' ? person.compositeScore : ''
@@ -3398,6 +3449,16 @@ function App() {
                 onChange={(event) => setDetailSearch(event.target.value)}
                 placeholder={t('搜索人员')}
               />
+              <input
+                className="detail-min-input"
+                type="number"
+                min="0"
+                step="1"
+                inputMode="numeric"
+                value={detailMinUnits}
+                onChange={(event) => setDetailMinUnits(event.target.value)}
+                placeholder={t('件数下限')}
+              />
               {isFiltering ? <span className="filter-spinner" aria-hidden /> : null}
               <button
                 type="button"
@@ -3446,6 +3507,15 @@ function App() {
                     {t(team)}
                   </option>
                 ))}
+              </select>
+              <select
+                className="team-select"
+                value={detailShiftFilter}
+                onChange={(event) => setDetailShiftFilter(event.target.value)}
+              >
+                <option value="all">{t('全部班次')}</option>
+                <option value="day">{t('早班')}</option>
+                <option value="night">{t('晚班')}</option>
               </select>
               <select
                 className="team-select sort-select"
@@ -3536,6 +3606,7 @@ function App() {
                       : detailStageFilter === 'packing'
                         ? person.packingSingleEwhHours + person.packingMultiEwhHours
                       : person.ewhHours
+                const stageRatio = calcWorkRatioPercent(ewh, person.attendanceHours)
                 const eff = ewh > 0 ? units / ewh : null
                 const effParts = []
                 if (detailStageFilter === 'picking') {
@@ -3675,7 +3746,7 @@ function App() {
                         startLabel
                       )}
                     </span>
-                    <span>{formatHours(person.ewhHours)}</span>
+                    <span>{formatHours(ewh)}</span>
                     <span>{person.attendanceHours ? formatHours(person.attendanceHours) : '--'}</span>
                     <span>
                       {person.attendanceHours
@@ -3729,7 +3800,7 @@ function App() {
                         />
                       )}
                     </span>
-                    <span>{ratio === null ? '--' : `${ratio.toFixed(0)}%`}</span>
+                    <span>{stageRatio === null ? '--' : `${stageRatio.toFixed(0)}%`}</span>
                     {/* status moved next to name */}
                   </div>
                 )
@@ -4679,30 +4750,35 @@ const buildDetailRows = (
   })
 
   if (combinedReport?.meta?.windowStart) {
-    const start = new Date(combinedReport.meta.windowStart)
-    const noon = new Date(start.getFullYear(), start.getMonth(), start.getDate(), 12, 0, 0, 0)
+    const windowStartMs = new Date(combinedReport.meta.windowStart).getTime()
+    const windowEndMs = Number.isFinite(windowStartMs)
+      ? windowStartMs + 24 * 60 * 60 * 1000
+      : Number.NaN
     workSegmentsByKey.forEach((segments, key) => {
       const row = rows.get(key)
-      if (!row || row.shiftType) return
-      let amMinutes = 0
-      let pmMinutes = 0
+      if (!row || row.shiftType || !Number.isFinite(windowStartMs) || !Number.isFinite(windowEndMs)) return
+      let dayMinutes = 0
+      let nightMinutes = 0
+      const dominantStage = getDominantStageKey(row)
       segments.forEach((seg) => {
-        const segStart = new Date(seg.start)
-        const segEnd = new Date(seg.end)
+        const segStartRaw = new Date(seg.start).getTime()
+        const segEndRaw = new Date(seg.end).getTime()
+        if (!Number.isFinite(segStartRaw) || !Number.isFinite(segEndRaw) || segEndRaw <= segStartRaw) return
+        const segStart = Math.max(segStartRaw, windowStartMs)
+        const segEnd = Math.min(segEndRaw, windowEndMs)
         if (segEnd <= segStart) return
-        if (segEnd <= noon) {
-          amMinutes += (segEnd - segStart) / 60000
-          return
-        }
-        if (segStart >= noon) {
-          pmMinutes += (segEnd - segStart) / 60000
-          return
-        }
-        amMinutes += (noon - segStart) / 60000
-        pmMinutes += (segEnd - noon) / 60000
+        const stageKey =
+          seg.type === 'picking' || seg.type === 'sorting' || seg.type === 'packing'
+            ? seg.type
+            : dominantStage || 'packing'
+        const shiftBoundaryMs = getStageShiftBoundaryMs(windowStartMs, stageKey)
+        const dayMs = calcOverlapMs(segStart, segEnd, windowStartMs, shiftBoundaryMs)
+        const nightMs = calcOverlapMs(segStart, segEnd, shiftBoundaryMs, windowEndMs)
+        if (dayMs > 0) dayMinutes += dayMs / 60000
+        if (nightMs > 0) nightMinutes += nightMs / 60000
       })
-      if (amMinutes === 0 && pmMinutes === 0) return
-      row.shiftType = amMinutes >= pmMinutes ? '早班' : '晚班'
+      if (dayMinutes === 0 && nightMinutes === 0) return
+      row.shiftType = dayMinutes >= nightMinutes ? '早班' : '晚班'
     })
   }
 
