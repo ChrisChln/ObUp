@@ -1166,16 +1166,6 @@ function App() {
   const debouncedDetailSearch = useDebouncedValue(detailSearch, 250)
   const detailSearchNormalized = useMemo(() => normalizeName(debouncedDetailSearch), [debouncedDetailSearch])
   const detailSearchWorkKey = useMemo(() => normalizeWorkKey(debouncedDetailSearch), [debouncedDetailSearch])
-  const [isFiltering, setIsFiltering] = useState(false)
-
-  useEffect(() => {
-    // 显示过滤 loading 状态，等防抖结束再隐藏（不自动滚动）
-    setIsFiltering(true)
-    const id = setTimeout(() => {
-      setIsFiltering(false)
-    }, 260)
-    return () => clearTimeout(id)
-  }, [debouncedDetailSearch, detailStageFilter, teamFilter, detailShiftFilter, detailOnlyAbnormal, detailMinUnits])
   const whitelistRoleMap = useMemo(() => {
     const map = new Map()
     whitelist.forEach((entry) => {
@@ -3459,7 +3449,6 @@ function App() {
                 onChange={(event) => setDetailMinUnits(event.target.value)}
                 placeholder={t('件数下限')}
               />
-              {isFiltering ? <span className="filter-spinner" aria-hidden /> : null}
               <button
                 type="button"
                 className={detailStageFilter === 'all' ? 'chip active' : 'chip'}
