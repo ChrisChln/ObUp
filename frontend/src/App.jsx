@@ -215,6 +215,7 @@ const TRANSLATIONS = {
     '拣货人效': 'Picking UPH',
     '分拨人效': 'Sorting UPH',
     '单 / 小时': 'units / hr',
+    '件 / 小时': 'units / hr',
     '包含拣货 / 打包 / 分拨': 'Includes picking / packing / sorting',
     '拣货数据': 'Picking',
     '分拨数据': 'Sorting',
@@ -248,6 +249,9 @@ const TRANSLATIONS = {
     '所属组': 'Team',
     '工作时间占比': 'Ratio',
     '状态': 'Status',
+    '出库总工时': 'Outbound total hours',
+    'ObPunch导出': 'From ObPunch export',
+    '等待ObPunch数据': 'Waiting for ObPunch data',
     '待上传': 'Waiting',
     '正常': 'OK',
     '异常': 'Issue',
@@ -302,6 +306,10 @@ const TRANSLATIONS = {
     '语言': 'Language',
     '中文': 'Chinese',
     '英语': 'English',
+    '白班出库完成件数': 'Day shift packed units',
+    '夜班出库完成件数': 'Night shift packed units',
+    '出库UPH': 'Outbound UPH',
+    '件数/工时（含白名单）': 'Units / hours (incl. whitelist)',
     '拣货为主': 'Picking-first',
     '分拨为主': 'Sorting-first',
     '打包为主': 'Packing-first',
@@ -1019,6 +1027,65 @@ function App() {
       ),
     [combinedReport, pickingReport, sortingReport, packingReport, attendanceReport, effectiveNameMap]
   )
+  const bannerPackingShiftStats = useMemo(() => {
+    const dayStartBase = new Date(attendanceReport?.meta?.windowStart || '').getTime()
+    const fallbackStart = selectedDate
+      ? new Date(`${selectedDate}T05:00:00`).getTime()
+      : Number.NaN
+    const windowStart = Number.isFinite(dayStartBase) ? dayStartBase : fallbackStart
+    const windowEnd = Number.isFinite(windowStart) ? windowStart + 24 * 60 * 60 * 1000 : Number.NaN
+    if (!Number.isFinite(windowStart) || !Number.isFinite(windowEnd)) {
+      return { dayUnits: 0, nightUnits: 0, dayHours: 0, nightHours: 0, dayUph: null, nightUph: null }
+    }
+    const nightStart = windowStart + 10.5 * 60 * 60 * 1000 // 15:30（你提到夜班有 15:30/16:30 两种开班）
+    const overlapMs = (aStart, aEnd, bStart, bEnd) =>
+      Math.max(0, Math.min(aEnd, bEnd) - Math.max(aStart, bStart))
+
+    let dayUnits = 0
+    let nightUnits = 0
+    let dayHours = 0
+    let nightHours = 0
+
+    // 件数：直接按打包 work 片段与白/夜时间窗重叠分摊，避免姓名匹配导致错分。
+    Object.values(packingReport?.segments || {}).forEach((segs) => {
+      ;(segs || []).forEach((seg) => {
+        if (seg?.type !== 'work') return
+        const units = Number(seg.units || 0)
+        if (!(units > 0)) return
+        const segStart = new Date(seg.start).getTime()
+        const segEnd = new Date(seg.end).getTime()
+        if (!Number.isFinite(segStart) || !Number.isFinite(segEnd) || segEnd <= segStart) return
+        const start = Math.max(segStart, windowStart)
+        const end = Math.min(segEnd, windowEnd)
+        if (end <= start) return
+        const duration = end - start
+        const dayMs = overlapMs(start, end, windowStart, nightStart)
+        const nightMs = overlapMs(start, end, nightStart, windowEnd)
+        if (dayMs > 0) dayUnits += units * (dayMs / duration)
+        if (nightMs > 0) nightUnits += units * (nightMs / duration)
+      })
+    })
+
+    // 工时：直接按考勤 attendance 片段与白/夜时间窗重叠累加（包含白名单，不做过滤）。
+    Object.values(attendanceReport?.segments || {}).forEach((segs) => {
+      ;(segs || []).forEach((seg) => {
+        if (seg?.type !== 'attendance') return
+        const segStart = new Date(seg.start).getTime()
+        const segEnd = new Date(seg.end).getTime()
+        if (!Number.isFinite(segStart) || !Number.isFinite(segEnd) || segEnd <= segStart) return
+        const start = Math.max(segStart, windowStart)
+        const end = Math.min(segEnd, windowEnd)
+        if (end <= start) return
+        const dayMs = overlapMs(start, end, windowStart, nightStart)
+        const nightMs = overlapMs(start, end, nightStart, windowEnd)
+        if (dayMs > 0) dayHours += dayMs / 3600000
+        if (nightMs > 0) nightHours += nightMs / 3600000
+      })
+    })
+    const dayUph = dayHours > 0 ? dayUnits / dayHours : null
+    const nightUph = nightHours > 0 ? nightUnits / nightHours : null
+    return { dayUnits: Math.round(dayUnits), nightUnits: Math.round(nightUnits), dayHours, nightHours, dayUph, nightUph }
+  }, [packingReport, attendanceReport, selectedDate])
   const detailTeams = useMemo(
     () => Array.from(new Set(detailRows.flatMap((row) => Array.from(row.groups)))),
     [detailRows]
@@ -2951,31 +3018,31 @@ function App() {
               </small>
             </div>
             <div className="meta-card">
-              <span>{t('出勤工时')}</span>
+              <span>{t('出库总工时')}</span>
               <strong>{attendanceReport ? formatHours(attendanceReport.kpi.totalEwhHoursAll) : '--'}</strong>
-              <small>{attendanceReport ? t('考勤表统计') : t('等待考勤数据')}</small>
+              <small>{attendanceReport ? t('ObPunch导出') : t('等待ObPunch数据')}</small>
             </div>
           </div>
           <div className="kpi-row kpi-row--compact">
             <div className="kpi-card kpi-mini picking">
               <h3>{t('拣货人效')}</h3>
               <strong>{pickingMini === null ? '--' : pickingMini.toFixed(1)}</strong>
-              <small>{t('单 / 小时')}</small>
+              <small>{t('件 / 小时')}</small>
             </div>
             <div className="kpi-card kpi-mini sorting">
               <h3>{t('分拨人效')}</h3>
               <strong>{sortingMini === null ? '--' : sortingMini.toFixed(1)}</strong>
-              <small>{t('单 / 小时')}</small>
+              <small>{t('件 / 小时')}</small>
             </div>
             <div className="kpi-card kpi-mini packing-single">
               <h3>{t('单品打包')}</h3>
               <strong>{packingSingleMini === null ? '--' : packingSingleMini.toFixed(1)}</strong>
-              <small>{t('单 / 小时')}</small>
+              <small>{t('件 / 小时')}</small>
             </div>
             <div className="kpi-card kpi-mini packing-multi">
               <h3>{t('多品打包')}</h3>
               <strong>{packingMultiMini === null ? '--' : packingMultiMini.toFixed(1)}</strong>
-              <small>{t('单 / 小时')}</small>
+              <small>{t('件 / 小时')}</small>
             </div>
           </div>
           <div className="hero__filters">
@@ -3132,6 +3199,20 @@ function App() {
               className="upload-banner-img"
             />
             <div className="upload-banner-overlay" aria-hidden="true">
+              <div className="banner-shift-card day">
+                <small>{t('白班出库完成件数')}</small>
+                <strong>{Number(bannerPackingShiftStats.dayUnits || 0).toLocaleString(locale)}</strong>
+                <em>
+                  {t('出库UPH')}: {bannerPackingShiftStats.dayUph === null ? '--' : bannerPackingShiftStats.dayUph.toFixed(2)}
+                </em>
+              </div>
+              <div className="banner-shift-card night">
+                <small>{t('夜班出库完成件数')}</small>
+                <strong>{Number(bannerPackingShiftStats.nightUnits || 0).toLocaleString(locale)}</strong>
+                <em>
+                  {t('出库UPH')}: {bannerPackingShiftStats.nightUph === null ? '--' : bannerPackingShiftStats.nightUph.toFixed(2)}
+                </em>
+              </div>
               <div className="banner-left">战斗战斗</div>
               <div className="banner-right">结果第一</div>
             </div>

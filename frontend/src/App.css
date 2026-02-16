@@ -711,6 +711,43 @@ button.ghost::before,
   pointer-events: none;
   z-index: 2;
 }
+.banner-shift-card {
+  position: absolute;
+  z-index: 4;
+  min-width: 210px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 2px solid rgba(239, 68, 68, 0.95);
+  background: rgba(0, 0, 0, 0.12);
+  color: #ffffff;
+  display: grid;
+  gap: 4px;
+  backdrop-filter: blur(2px);
+}
+.banner-shift-card small {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.banner-shift-card strong {
+  font-size: 28px;
+  line-height: 1;
+  letter-spacing: 0.5px;
+}
+.banner-shift-card em {
+  font-style: normal;
+  font-size: 11px;
+  opacity: 0.9;
+  line-height: 1.2;
+}
+.banner-shift-card.day {
+  top: 16px;
+  left: 16px;
+}
+.banner-shift-card.night {
+  right: 16px;
+  bottom: 16px;
+}
 .banner-left,
 .banner-right {
   position: absolute;
@@ -1781,6 +1818,23 @@ button.ghost::before {
 
   .timeline-row {
     gap: 8px;
+  }
+
+  .banner-shift-card {
+    min-width: 156px;
+    padding: 8px 10px;
+  }
+
+  .banner-shift-card small {
+    font-size: 11px;
+  }
+
+  .banner-shift-card strong {
+    font-size: 20px;
+  }
+
+  .banner-shift-card em {
+    font-size: 10px;
   }
 
   .hero__meta,
