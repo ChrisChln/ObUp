@@ -245,11 +245,13 @@ const TRANSLATIONS = {
     '有效工时': 'EWH',
     '工时': 'Hours',
     '加班': 'OT',
+    '所属组': 'Team',
     '工作时间占比': 'Ratio',
     '状态': 'Status',
     '待上传': 'Waiting',
     '正常': 'OK',
     '异常': 'Issue',
+    '匹配异常': 'Match Issue',
     '组长': 'Leader',
     '已匹配': 'Matched',
     '请选择考勤账号进行匹配': 'Please select attendance name to match',
@@ -430,6 +432,26 @@ const calcWorkRatioPercent = (ewhHours, attendanceHours) =>
   isAttendanceHoursReliable(attendanceHours)
     ? (Number(ewhHours || 0) / Number(attendanceHours || 0)) * 100
     : null
+
+const getDominantStageKey = (person) => {
+  const picking = Number(person?.pickingUnits || 0)
+  const packing = Number(person?.packingSingleUnits || 0) + Number(person?.packingMultiUnits || 0)
+  const sorting = Number(person?.sortingUnits || 0)
+  const max = Math.max(picking, packing, sorting)
+  if (max <= 0) return ''
+  // 平票时按拣货 > 打包 > 分拨，保证结果稳定。
+  if (picking === max) return 'picking'
+  if (packing === max) return 'packing'
+  return 'sorting'
+}
+
+const getDominantGroupLabel = (person, t) => {
+  const key = getDominantStageKey(person)
+  if (key === 'picking') return t('拣货')
+  if (key === 'packing') return t('打包')
+  if (key === 'sorting') return t('分拨')
+  return '--'
+}
 
 const mergeIntervals = (intervals) => {
   if (!intervals.length) return []
@@ -2043,11 +2065,13 @@ function App() {
       ? t(whitelistRole)
       : waitingAttendance
         ? t('待上传')
-        : hasIssue
-          ? t('异常')
-          : matchedByManual
-            ? t('已匹配')
-            : t('正常')
+        : matchIssue
+          ? t('匹配异常')
+          : hasIssue
+            ? t('异常')
+            : matchedByManual
+              ? t('已匹配')
+              : t('正常')
   }
 
   const escapeHtml = (value) =>
@@ -2494,8 +2518,10 @@ function App() {
         const stageEwh = getReportEwhForStage(person)
         const eff = stageEwh > 0 ? units / stageEwh : null
         const ratio = calcWorkRatioPercent(person.ewhHours, person.attendanceHours)
+        const dominantGroup = getDominantGroupLabel(person, t)
         return `<tr>
           <td>${escapeHtml(person.name || '--')}</td>
+          <td>${escapeHtml(dominantGroup)}</td>
           <td>${escapeHtml(getReportStartLabel(person))}</td>
           <td>${escapeHtml(Number(person.ewhHours || 0).toFixed(2))}</td>
           <td>${escapeHtml(Number(person.attendanceHours || 0).toFixed(2))}</td>
@@ -2508,10 +2534,10 @@ function App() {
       })
       .join('')
     const tableHtml = `<table><thead><tr>
-      <th>${escapeHtml(t('人员'))}</th><th>${escapeHtml(t('开始工作'))}</th><th>${escapeHtml(t('有效工时'))}</th>
+      <th>${escapeHtml(t('人员'))}</th><th>${escapeHtml(t('所属组'))}</th><th>${escapeHtml(t('开始工作'))}</th><th>${escapeHtml(t('有效工时'))}</th>
       <th>${escapeHtml(t('工时'))}</th><th>${escapeHtml(t('件数'))}</th><th>${escapeHtml(t('时效'))}</th>
       <th>${escapeHtml(t('综合分'))}</th><th>${escapeHtml(t('工作时间占比'))}</th><th>${escapeHtml(t('状态'))}</th>
-    </tr></thead><tbody>${tableRows || `<tr><td colspan="9">--</td></tr>`}</tbody></table>`
+    </tr></thead><tbody>${tableRows || `<tr><td colspan="10">--</td></tr>`}</tbody></table>`
 
     const timelineHtml = groupedTimeline.length
       ? groupedTimeline
@@ -2638,16 +2664,19 @@ function App() {
         ? t(whitelistRole)
         : waitingAttendance
           ? t('待上传')
-          : hasIssue
-            ? t('异常')
-            : matchedByManual
-              ? t('已匹配')
-              : t('正常')
+          : matchIssue
+            ? t('匹配异常')
+            : hasIssue
+              ? t('异常')
+              : matchedByManual
+                ? t('已匹配')
+                : t('正常')
       return label
     }
 
     const headers = [
       t('人员'),
+      t('所属组'),
       t('第一枪'),
       t('有效工时'),
       t('工时'),
@@ -2674,9 +2703,11 @@ function App() {
       const ratio = ratioRaw === null ? '' : ratioRaw
       const status = computeStatus(person)
       const score = typeof person.compositeScore === 'number' ? person.compositeScore : ''
+      const dominantGroup = getDominantGroupLabel(person, t)
 
       aoa.push([
         person.name || '',
+        dominantGroup,
         start,
         ewh ? Number(ewh.toFixed(2)) : '',
         hours ? Number(hours.toFixed(2)) : '',
@@ -3323,6 +3354,7 @@ function App() {
           <div className="table">
             <div className="table-row table-head">
               <span>{t('名字')}</span>
+              <span>{t('所属组')}</span>
               <span>{t('第一枪')}</span>
               <span>{t('有效工时')}</span>
               <span>{t('工时')}</span>
@@ -3335,11 +3367,7 @@ function App() {
           {detailRows.length ? (
             sortedDetailRows.map((person) => {
                 const ratio = calcWorkRatioPercent(person.ewhHours, person.attendanceHours)
-                const groupList = Array.from(person.groups)
-                const groupText = groupList.join(' / ') || '--'
-                const detailText = `${t('拣货')} ${person.pickingUnits} | ${t('分拨')} ${person.sortingUnits} | ${t('打包')} ${
-                  person.packingSingleUnits + person.packingMultiUnits
-                }`
+                const dominantGroup = getDominantGroupLabel(person, t)
                 const unitParts = []
                 if (detailStageFilter === 'picking') {
                   unitParts.push(`${t('拣货')}:${person.pickingUnits}`)
@@ -3438,11 +3466,13 @@ function App() {
                   ? t(whitelistRole)
                   : waitingAttendance
                     ? t('待上传')
-                    : hasIssue
-                      ? t('异常')
-                      : matchedByManual
-                        ? t('已匹配')
-                        : t('正常')
+                    : matchIssue
+                      ? t('匹配异常')
+                      : hasIssue
+                        ? t('异常')
+                        : matchedByManual
+                          ? t('已匹配')
+                          : t('正常')
                 const statusTone = whitelistRole
                   ? whitelistRole === '异常'
                     ? 'error'
@@ -3500,6 +3530,7 @@ function App() {
                         {statusLabel}
                       </span>
                     </div>
+                    <span>{dominantGroup}</span>
                     <span className="badge-group">
                       {shiftTone ? (
                         <span className={`unit-tag ${shiftTone}`}>{startLabel}</span>
@@ -3569,6 +3600,7 @@ function App() {
           ) : (
             <div className="table-row">
               <span>{t('暂无数据')}</span>
+              <span>--</span>
               <span>--</span>
               <span>--</span>
               <span>--</span>
