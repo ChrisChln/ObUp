@@ -2544,6 +2544,7 @@ function App() {
                   ? Number(person.packingSingleEwhHours || 0) + Number(person.packingMultiEwhHours || 0)
                   : 0
           const hours = Number(person.attendanceHours || 0)
+          if (!(hours > 0)) return
           const eff = ewh > 0 ? units / ewh : null
           const ratio = calcWorkRatioPercent(ewh, hours)
           dayRows.push({
