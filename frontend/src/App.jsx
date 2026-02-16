@@ -256,6 +256,8 @@ const TRANSLATIONS = {
     '正常': 'OK',
     '异常': 'Issue',
     '匹配异常': 'Match Issue',
+    '考勤异常': 'Attendance Issue',
+    '首枪异常': 'First-shot Issue',
     '组长': 'Leader',
     '已匹配': 'Matched',
     '请选择考勤账号进行匹配': 'Please select attendance name to match',
@@ -334,6 +336,9 @@ const TRANSLATIONS = {
     '取消匹配': 'Clear match',
     '匹配全局生效': 'Matches are global',
     '匹配仅对当前日期生效': 'Matches apply to selected date only',
+    '白名单快捷分配': 'Whitelist quick assign',
+    '当前白名单角色': 'Current whitelist role',
+    '移出白名单': 'Remove from whitelist',
     '确认清空所有手动匹配？': 'Clear all matches?',
     '清空匹配': 'Clear matches',
     '输入密码后可新增/删除白名单': 'Enter password to edit whitelist',
@@ -948,6 +953,7 @@ function App() {
   const [reportEmployeeOptionsLoading, setReportEmployeeOptionsLoading] = useState(false)
   const [globalWorkAccounts, setGlobalWorkAccounts] = useState([])
   const [whitelistUnlocked, setWhitelistUnlocked] = useState(false)
+  const [matchWhitelistPassword, setMatchWhitelistPassword] = useState('')
   const [whitelistInput, setWhitelistInput] = useState('')
   const [whitelistRoleInput, setWhitelistRoleInput] = useState('组长')
   const [accountLinkSearch, setAccountLinkSearch] = useState('')
@@ -1182,6 +1188,10 @@ function App() {
     const key = normalizeName(person?.attendanceName || person?.name)
     return key ? whitelistRoleMap.get(key) || '' : ''
   }
+  const selectedMatchWhitelistRole = useMemo(() => {
+    const key = normalizeName(selectedMatchName)
+    return key ? whitelistRoleMap.get(key) || '' : ''
+  }, [selectedMatchName, whitelistRoleMap])
   const isWhitelistExempt = (role) => Boolean(role && role !== '异常')
   const startTimeMaps = useMemo(
     () => ({
@@ -1205,6 +1215,21 @@ function App() {
     })
     return map
   }, [attendanceWindowMap])
+  const getPersonStartKey = (person) =>
+    person?.attendanceName
+      ? normalizeName(person.attendanceName)
+      : person?.workKey
+        ? person.workKey
+        : person?.sources && person.sources.size
+          ? normalizeWorkKey(Array.from(person.sources)[0])
+          : normalizeName(person?.name)
+  const getFirstGunMinutesByMap = (person, startMap = startTimeMaps.all) => {
+    const startKey = getPersonStartKey(person)
+    const startMs = startMap.get(startKey)
+    const attendanceStartMs = attendanceStartMap.get(startKey)
+    if (!Number.isFinite(startMs) || !Number.isFinite(attendanceStartMs)) return null
+    return Math.max(0, Math.round((startMs - attendanceStartMs) / 60000))
+  }
   const hasAttendanceData = (attendanceReport?.stats || []).length > 0
   const attendanceNames = useMemo(
     () => Array.from(
@@ -1326,15 +1351,44 @@ function App() {
     })
     return Array.from(merged).sort((a, b) => a.localeCompare(b, locale))
   }, [accountLinkOptions, accountLinkMap, accountLinkDraftMap, showAccountLink, locale])
+  const ongoingAttendanceNameSet = useMemo(() => {
+    const set = new Set()
+    if (!isTodaySelected) return set
+    const windowEndMs = new Date(attendanceReport?.meta?.windowEnd || '').getTime()
+    if (!Number.isFinite(windowEndMs)) return set
+    Object.entries(attendanceReport?.segments || {}).forEach(([name, segs]) => {
+      const hasOpenTail = (segs || []).some((seg) => {
+        if (seg?.type !== 'attendance') return false
+        const endMs = new Date(seg.end).getTime()
+        return Number.isFinite(endMs) && Math.abs(endMs - windowEndMs) <= 1000
+      })
+      if (hasOpenTail) {
+        const key = normalizeName(name)
+        if (key) set.add(key)
+      }
+    })
+    return set
+  }, [attendanceReport, isTodaySelected])
   const filteredDetailRows = useMemo(
     () => {
       const parsedMinUnits = Number(detailMinUnits)
       const hasMinUnits = detailMinUnits !== '' && Number.isFinite(parsedMinUnits) && parsedMinUnits >= 0
       return detailRows.filter((person) => {
+        const totalUnits =
+          Number(person.pickingUnits || 0) +
+          Number(person.sortingUnits || 0) +
+          Number(person.packingSingleUnits || 0) +
+          Number(person.packingMultiUnits || 0)
+        const isOngoingAttendanceOnly =
+          ongoingAttendanceNameSet.has(normalizeName(person.attendanceName || person.name)) &&
+          Number(person.ewhHours || 0) <= 0 &&
+          totalUnits <= 0
+        if (isOngoingAttendanceOnly) return false
         if (detailOnlyAbnormal) {
           if (!person.attendanceName) return false
           if (!attendanceNameSet.has(normalizeName(person.attendanceName))) return false
           const ratio = calcWorkRatioPercent(person.ewhHours, person.attendanceHours)
+          const firstGunMinutes = getFirstGunMinutesByMap(person)
           const role = getWhitelistRole(person)
           const forcedIssue = role === '异常'
           const exempt = isWhitelistExempt(role)
@@ -1343,7 +1397,8 @@ function App() {
             hasAttendanceData &&
             (!person.attendanceMatched || person.attendanceHours <= 0)
           const ratioIssue = !exempt && ratio !== null && (ratio < 75 || ratio > 100)
-          if (!(forcedIssue || matchIssue || ratioIssue)) return false
+          const firstGunIssue = !exempt && Number.isFinite(firstGunMinutes) && firstGunMinutes > 20
+          if (!(forcedIssue || matchIssue || ratioIssue || firstGunIssue)) return false
         }
         if (detailStageFilter === 'picking' && !(person.groups.has('拣货') || person.hasPicked)) return false
         if (detailStageFilter === 'sorting' && !(person.groups.has('分拨') || person.hasSorted)) return false
@@ -1374,40 +1429,12 @@ function App() {
         return true
       })
     },
-    [detailRows, detailOnlyAbnormal, attendanceNameSet, whitelistRoleMap, hasAttendanceData, detailStageFilter, teamFilter, detailShiftFilter, detailSearchNormalized, detailMinUnits]
+    [detailRows, detailOnlyAbnormal, attendanceNameSet, whitelistRoleMap, hasAttendanceData, detailStageFilter, teamFilter, detailShiftFilter, detailSearchNormalized, detailMinUnits, startTimeMaps, attendanceStartMap, ongoingAttendanceNameSet]
   )
 
   const sortedDetailRows = useMemo(() => {
     const rows = filteredDetailRows.slice()
     const dir = detailSortDir === 'asc' ? 1 : -1
-
-    const startMap = startTimeMaps.all
-
-    const getStartMs = (person) => {
-      const startKey = person.attendanceName
-        ? normalizeName(person.attendanceName)
-        : person.workKey
-          ? person.workKey
-          : person.sources && person.sources.size
-            ? normalizeWorkKey(Array.from(person.sources)[0])
-            : normalizeName(person.name)
-      const ms = startMap.get(startKey)
-      return Number.isFinite(ms) ? ms : null
-    }
-
-    const getFirstGunMinutes = (person) => {
-      const startKey = person.attendanceName
-        ? normalizeName(person.attendanceName)
-        : person.workKey
-          ? person.workKey
-          : person.sources && person.sources.size
-            ? normalizeWorkKey(Array.from(person.sources)[0])
-            : normalizeName(person.name)
-      const startMs = getStartMs(person)
-      const attendanceStartMs = attendanceStartMap.get(startKey)
-      if (!Number.isFinite(startMs) || !Number.isFinite(attendanceStartMs)) return null
-      return Math.max(0, Math.round((startMs - attendanceStartMs) / 60000))
-    }
 
     const getUnits = (person) => {
       if (detailStageFilter === 'picking') return Number(person.pickingUnits || 0)
@@ -1451,7 +1478,7 @@ function App() {
         case 'name':
           return person.name || ''
         case 'start':
-          return getFirstGunMinutes(person)
+          return getFirstGunMinutesByMap(person)
         case 'ewh':
           return getEwh(person)
         case 'hours':
@@ -1919,6 +1946,10 @@ function App() {
   }, [quickLinks])
 
   useEffect(() => {
+    if (!showMatch) setMatchWhitelistPassword('')
+  }, [showMatch])
+
+  useEffect(() => {
     localStorage.setItem('obup.lang', lang)
     document.documentElement.lang = lang === 'en' ? 'en' : 'zh-CN'
   }, [lang])
@@ -2131,6 +2162,17 @@ function App() {
     setShowAccountLink(true)
   }
 
+  const unlockWhitelistWithPassword = (rawPassword) => {
+    const password = String(rawPassword || '').trim()
+    if (password === '0402') {
+      setWhitelistUnlocked(true)
+      setMatchWhitelistPassword('')
+      return true
+    }
+    alert(t('密码错误'))
+    return false
+  }
+
   const closeAccountLinkPanel = async () => {
     const previous = accountLinkMap
     const next = accountLinkDraftMap
@@ -2312,6 +2354,7 @@ function App() {
 
   const getReportStatus = (person) => {
     const ratio = calcWorkRatioPercent(person.ewhHours, person.attendanceHours)
+    const firstGunMinutes = getFirstGunMinutesByMap(person, startTimeMaps.all)
     const whitelistRole = getWhitelistRole(person)
     const whitelistExempt = isWhitelistExempt(whitelistRole)
     const forcedIssue = whitelistRole === '异常'
@@ -2320,17 +2363,21 @@ function App() {
       hasAttendanceData &&
       (!person.attendanceMatched || person.attendanceHours <= 0)
     const ratioIssue = !whitelistExempt && ratio !== null && (ratio < 75 || ratio > 100)
+    const firstGunIssue =
+      !whitelistExempt && Number.isFinite(firstGunMinutes) && firstGunMinutes > 20
     const waitingAttendance = !hasAttendanceData && person.ewhHours > 0
     const matchedByManual = person.attendanceName && effectiveNameMap[person.attendanceName]
-    const hasIssue = forcedIssue || matchIssue || ratioIssue
+    const hasIssue = forcedIssue || matchIssue || ratioIssue || firstGunIssue
     return whitelistRole
       ? t(whitelistRole)
       : waitingAttendance
         ? t('待上传')
         : matchIssue
           ? t('匹配异常')
-          : hasIssue
-            ? t('异常')
+          : firstGunIssue
+            ? t('首枪异常')
+          : ratioIssue
+            ? t('考勤异常')
             : matchedByManual
               ? t('已匹配')
               : t('正常')
@@ -2923,6 +2970,7 @@ function App() {
 
     const computeStatus = (person) => {
       const ratio = calcWorkRatioPercent(person.ewhHours, person.attendanceHours)
+      const firstGunMinutes = getFirstGunMinutesByMap(person, startTimeMaps.all)
       const whitelistRole = getWhitelistRole(person)
       const whitelistExempt = isWhitelistExempt(whitelistRole)
       const forcedIssue = whitelistRole === '异常'
@@ -2931,17 +2979,21 @@ function App() {
         hasAttendance &&
         (!person.attendanceMatched || person.attendanceHours <= 0)
       const ratioIssue = !whitelistExempt && ratio !== null && (ratio < 75 || ratio > 100)
+      const firstGunIssue =
+        !whitelistExempt && Number.isFinite(firstGunMinutes) && firstGunMinutes > 20
       const waitingAttendance = !hasAttendance && person.ewhHours > 0
       const matchedByManual = person.attendanceName && effectiveNameMap[person.attendanceName]
-      const hasIssue = forcedIssue || matchIssue || ratioIssue
+      const hasIssue = forcedIssue || matchIssue || ratioIssue || firstGunIssue
       const label = whitelistRole
         ? t(whitelistRole)
         : waitingAttendance
           ? t('待上传')
           : matchIssue
             ? t('匹配异常')
-            : hasIssue
-              ? t('异常')
+            : firstGunIssue
+              ? t('首枪异常')
+            : ratioIssue
+              ? t('考勤异常')
               : matchedByManual
                 ? t('已匹配')
                 : t('正常')
@@ -3797,7 +3849,10 @@ function App() {
                   !hasAttendanceData && person.ewhHours > 0
                 const matchedByManual =
                   person.attendanceName && effectiveNameMap[person.attendanceName]
-                const hasIssue = forcedIssue || matchIssue || ratioIssue
+                const firstGunMinutes = getFirstGunMinutesByMap(person, startTimeMaps.all)
+                const firstGunIssue =
+                  !whitelistExempt && Number.isFinite(firstGunMinutes) && firstGunMinutes > 20
+                const hasIssue = forcedIssue || matchIssue || ratioIssue || firstGunIssue
                 const canOpenMatch =
                   person.attendanceName &&
                   (hasIssue ||
@@ -3809,8 +3864,10 @@ function App() {
                     ? t('待上传')
                     : matchIssue
                       ? t('匹配异常')
-                      : hasIssue
-                        ? t('异常')
+                      : firstGunIssue
+                        ? t('首枪异常')
+                      : ratioIssue
+                        ? t('考勤异常')
                         : matchedByManual
                           ? t('已匹配')
                           : t('正常')
@@ -3829,23 +3886,10 @@ function App() {
                 let rowState = 'row-normal'
                 // 优先显示“未匹配”为黄色，其次显示时效异常为红色
                 if (matchIssue) rowState = 'row-warning'
+                else if (firstGunIssue) rowState = 'row-warning'
                 else if (ratioIssue) rowState = 'row-error'
                 const sourceName =
                   person.sources && person.sources.size ? Array.from(person.sources)[0] : person.name
-                const startMap = startTimeMaps.all
-                const startKey = person.attendanceName
-                  ? normalizeName(person.attendanceName)
-                  : person.workKey
-                    ? person.workKey
-                    : person.sources && person.sources.size
-                      ? normalizeWorkKey(Array.from(person.sources)[0])
-                      : normalizeName(person.name)
-                const startMs = startMap.get(startKey)
-                const attendanceStartMs = attendanceStartMap.get(startKey)
-                const firstGunMinutes =
-                  Number.isFinite(startMs) && Number.isFinite(attendanceStartMs)
-                    ? Math.max(0, Math.round((startMs - attendanceStartMs) / 60000))
-                    : null
                 const startLabel = Number.isFinite(firstGunMinutes) ? `${firstGunMinutes}m` : '--'
                 const shiftLabel = person.shiftType || ''
                 const shiftTone =
@@ -4258,6 +4302,63 @@ function App() {
                 {t('关闭')}
               </button>
             </div>
+            {selectedMatchName ? (
+              <div className="match-whitelist-quick">
+                <div className="match-whitelist-header">
+                  <strong>{t('白名单快捷分配')}</strong>
+                  <span>{`${t('当前白名单角色')}: ${selectedMatchWhitelistRole ? t(selectedMatchWhitelistRole) : t('无')}`}</span>
+                </div>
+                {!whitelistUnlocked ? (
+                  <div className="leaders-lock-row">
+                    <input
+                      className="settings-input"
+                      type="password"
+                      value={matchWhitelistPassword}
+                      placeholder={t('输入密码')}
+                      onChange={(event) => setMatchWhitelistPassword(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          unlockWhitelistWithPassword(matchWhitelistPassword)
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="primary"
+                      onClick={() => unlockWhitelistWithPassword(matchWhitelistPassword)}
+                    >
+                      {t('解锁')}
+                    </button>
+                  </div>
+                ) : null}
+                <div className="match-whitelist-actions">
+                  <button
+                    type="button"
+                    className={selectedMatchWhitelistRole === '组长' ? 'chip active' : 'chip'}
+                    onClick={() => updateWhitelistRole(selectedMatchName, '组长')}
+                    disabled={!whitelistUnlocked}
+                  >
+                    {t('组长')}
+                  </button>
+                  <button
+                    type="button"
+                    className={selectedMatchWhitelistRole === '异常' ? 'chip active' : 'chip'}
+                    onClick={() => updateWhitelistRole(selectedMatchName, '异常')}
+                    disabled={!whitelistUnlocked}
+                  >
+                    {t('异常')}
+                  </button>
+                  <button
+                    type="button"
+                    className="chip"
+                    onClick={() => updateWhitelistRole(selectedMatchName, '')}
+                    disabled={!whitelistUnlocked}
+                  >
+                    {t('移出白名单')}
+                  </button>
+                </div>
+              </div>
+            ) : null}
             <div className="match-list">
               {selectedMatchName && !matchPanelNames.includes(selectedMatchName) ? (
                 <div className="match-empty">{t('请选择考勤账号进行匹配')}</div>
@@ -4393,11 +4494,7 @@ function App() {
                     placeholder={t('输入密码')}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter') {
-                        if (event.currentTarget.value === '0402') {
-                          setWhitelistUnlocked(true)
-                        } else {
-                          alert(t('密码错误'))
-                        }
+                        unlockWhitelistWithPassword(event.currentTarget.value)
                       }
                     }}
                   />
@@ -4408,11 +4505,7 @@ function App() {
                       const input = event.currentTarget
                         .parentElement?.querySelector('input')
                       const value = input?.value || ''
-                      if (value === '0402') {
-                        setWhitelistUnlocked(true)
-                      } else {
-                        alert(t('密码错误'))
-                      }
+                      unlockWhitelistWithPassword(value)
                     }}
                   >
                     {t('解锁')}
