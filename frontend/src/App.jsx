@@ -954,6 +954,7 @@ function App() {
   const [timelineTip, setTimelineTip] = useState({ visible: false, x: 0, y: 0, content: '' })
   const [selectedMatchName, setSelectedMatchName] = useState('')
   const [productionIndex, setProductionIndex] = useState(0)
+  const [miniShiftView, setMiniShiftView] = useState('day')
   const [uploadingKeys, setUploadingKeys] = useState(new Set())
   const [efficiencyFilter, setEfficiencyFilter] = useState('picking')
   const [efficiencyMinUnits, setEfficiencyMinUnits] = useState('')
@@ -1738,6 +1739,108 @@ function App() {
     (row) => row.packingMultiEwhHours
   )
 
+  const miniShiftUph = useMemo(() => {
+    const splitUphByShift = (report, stageKey, getUnits, getHours) => {
+      if (!report?.stats?.length) return { dayUph: null, nightUph: null }
+      const dayStartBase = new Date(report?.meta?.windowStart || '').getTime()
+      const fallbackStart = selectedDate
+        ? new Date(`${selectedDate}T05:00:00`).getTime()
+        : Number.NaN
+      const windowStart = Number.isFinite(dayStartBase) ? dayStartBase : fallbackStart
+      const windowEnd = Number.isFinite(windowStart) ? windowStart + 24 * 60 * 60 * 1000 : Number.NaN
+      if (!Number.isFinite(windowStart) || !Number.isFinite(windowEnd)) {
+        return { dayUph: null, nightUph: null }
+      }
+      const nightStart = getStageShiftBoundaryMs(windowStart, stageKey)
+      let dayUnits = 0
+      let nightUnits = 0
+      let dayHours = 0
+      let nightHours = 0
+      ;(report.stats || []).forEach((stat) => {
+        const totalUnits = Number(getUnits(stat) || 0)
+        const totalHours = Number(getHours(stat) || 0)
+        if (minUnitsLimit !== null && totalUnits < minUnitsLimit) return
+        const segs = report?.segments?.[stat?.operator] || []
+        let dayMsTotal = 0
+        let nightMsTotal = 0
+        let firstWorkStart = Number.POSITIVE_INFINITY
+        ;(segs || []).forEach((seg) => {
+          if (!seg) return
+          const segType = String(seg.type || '')
+          const isWorkSeg =
+            segType === 'work' ||
+            segType === stageKey ||
+            segType === 'packing' ||
+            segType === 'packing-single' ||
+            segType === 'packing-multi'
+          if (!isWorkSeg) return
+          const segStart = new Date(seg.start).getTime()
+          const segEnd = new Date(seg.end).getTime()
+          if (!Number.isFinite(segStart) || !Number.isFinite(segEnd) || segEnd <= segStart) return
+          if (segStart < firstWorkStart) firstWorkStart = segStart
+          const start = Math.max(segStart, windowStart)
+          const end = Math.min(segEnd, windowEnd)
+          if (end <= start) return
+          const dayMs = calcOverlapMs(start, end, windowStart, nightStart)
+          const nightMs = calcOverlapMs(start, end, nightStart, windowEnd)
+          if (dayMs > 0) dayMsTotal += dayMs
+          if (nightMs > 0) nightMsTotal += nightMs
+        })
+        const totalMs = dayMsTotal + nightMsTotal
+        if (totalMs > 0) {
+          const dayRatio = dayMsTotal / totalMs
+          const nightRatio = nightMsTotal / totalMs
+          dayUnits += totalUnits * dayRatio
+          nightUnits += totalUnits * nightRatio
+          dayHours += totalHours * dayRatio
+          nightHours += totalHours * nightRatio
+          return
+        }
+        if (Number.isFinite(firstWorkStart) && firstWorkStart >= nightStart) {
+          nightUnits += totalUnits
+          nightHours += totalHours
+        } else {
+          dayUnits += totalUnits
+          dayHours += totalHours
+        }
+      })
+      return {
+        dayUph: dayHours > 0 ? dayUnits / dayHours : null,
+        nightUph: nightHours > 0 ? nightUnits / nightHours : null,
+      }
+    }
+
+    return {
+      picking: splitUphByShift(
+        pickingReport,
+        'picking',
+        (stat) => stat?.totalUnits,
+        (stat) => stat?.ewhHours
+      ),
+      sorting: splitUphByShift(
+        sortingReport,
+        'sorting',
+        (stat) => stat?.totalUnits,
+        (stat) => stat?.ewhHours
+      ),
+      packingSingle: splitUphByShift(
+        packingReport,
+        'packing',
+        (stat) => stat?.packingSingleUnits,
+        (stat) => stat?.packingSingleEwhHours
+      ),
+      packingMulti: splitUphByShift(
+        packingReport,
+        'packing',
+        (stat) => stat?.packingMultiUnits,
+        (stat) => stat?.packingMultiEwhHours
+      ),
+    }
+  }, [pickingReport, sortingReport, packingReport, selectedDate, minUnitsLimit])
+
+  const currentMiniShiftLabel = miniShiftView === 'night' ? t('晚班') : t('早班')
+  const currentMiniValue = (stat) => (miniShiftView === 'night' ? stat?.nightUph : stat?.dayUph)
+
   const productionStages = [
     { key: 'packing', label: '打包数据', value: packingReport?.kpi?.totalUnitsAll },
     { key: 'picking', label: '拣货数据', value: pickingReport?.kpi?.totalUnitsAll },
@@ -1750,6 +1853,13 @@ function App() {
     }, 3000)
     return () => clearInterval(timer)
   }, [productionStages.length])
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setMiniShiftView((prev) => (prev === 'day' ? 'night' : 'day'))
+    }, 3000)
+    return () => clearInterval(timer)
+  }, [])
 
   useEffect(() => {
     if (stageFilter !== 'all') return
@@ -3119,24 +3229,60 @@ function App() {
           </div>
           <div className="kpi-row kpi-row--compact">
             <div className="kpi-card kpi-mini picking">
-              <h3>{t('拣货人效')}</h3>
-              <strong>{pickingMini === null ? '--' : pickingMini.toFixed(1)}</strong>
-              <small>{t('件 / 小时')}</small>
+              <div className="kpi-mini-face" key={`picking-${miniShiftView}`}>
+                <span className={`kpi-mini-shift ${miniShiftView === 'night' ? 'night' : 'day'}`}>
+                  {currentMiniShiftLabel}
+                </span>
+                <h3>{t('拣货人效')}</h3>
+                <strong>
+                  {currentMiniValue(miniShiftUph.picking) === null
+                    ? (pickingMini === null ? '--' : pickingMini.toFixed(1))
+                    : currentMiniValue(miniShiftUph.picking).toFixed(1)}
+                </strong>
+                <small>{t('件 / 小时')}</small>
+              </div>
             </div>
             <div className="kpi-card kpi-mini sorting">
-              <h3>{t('分拨人效')}</h3>
-              <strong>{sortingMini === null ? '--' : sortingMini.toFixed(1)}</strong>
-              <small>{t('件 / 小时')}</small>
+              <div className="kpi-mini-face" key={`sorting-${miniShiftView}`}>
+                <span className={`kpi-mini-shift ${miniShiftView === 'night' ? 'night' : 'day'}`}>
+                  {currentMiniShiftLabel}
+                </span>
+                <h3>{t('分拨人效')}</h3>
+                <strong>
+                  {currentMiniValue(miniShiftUph.sorting) === null
+                    ? (sortingMini === null ? '--' : sortingMini.toFixed(1))
+                    : currentMiniValue(miniShiftUph.sorting).toFixed(1)}
+                </strong>
+                <small>{t('件 / 小时')}</small>
+              </div>
             </div>
             <div className="kpi-card kpi-mini packing-single">
-              <h3>{t('单品打包')}</h3>
-              <strong>{packingSingleMini === null ? '--' : packingSingleMini.toFixed(1)}</strong>
-              <small>{t('件 / 小时')}</small>
+              <div className="kpi-mini-face" key={`packing-single-${miniShiftView}`}>
+                <span className={`kpi-mini-shift ${miniShiftView === 'night' ? 'night' : 'day'}`}>
+                  {currentMiniShiftLabel}
+                </span>
+                <h3>{t('单品打包')}</h3>
+                <strong>
+                  {currentMiniValue(miniShiftUph.packingSingle) === null
+                    ? (packingSingleMini === null ? '--' : packingSingleMini.toFixed(1))
+                    : currentMiniValue(miniShiftUph.packingSingle).toFixed(1)}
+                </strong>
+                <small>{t('件 / 小时')}</small>
+              </div>
             </div>
             <div className="kpi-card kpi-mini packing-multi">
-              <h3>{t('多品打包')}</h3>
-              <strong>{packingMultiMini === null ? '--' : packingMultiMini.toFixed(1)}</strong>
-              <small>{t('件 / 小时')}</small>
+              <div className="kpi-mini-face" key={`packing-multi-${miniShiftView}`}>
+                <span className={`kpi-mini-shift ${miniShiftView === 'night' ? 'night' : 'day'}`}>
+                  {currentMiniShiftLabel}
+                </span>
+                <h3>{t('多品打包')}</h3>
+                <strong>
+                  {currentMiniValue(miniShiftUph.packingMulti) === null
+                    ? (packingMultiMini === null ? '--' : packingMultiMini.toFixed(1))
+                    : currentMiniValue(miniShiftUph.packingMulti).toFixed(1)}
+                </strong>
+                <small>{t('件 / 小时')}</small>
+              </div>
             </div>
           </div>
           <div className="hero__filters">
@@ -3547,6 +3693,7 @@ function App() {
           <div className="table">
             <div className="table-row table-head">
               <span>{t('名字')}</span>
+              <span>{t('状态')}</span>
               <span>{t('所属组')}</span>
               <span>{t('第一枪')}</span>
               <span>{t('有效工时')}</span>
@@ -3710,8 +3857,10 @@ function App() {
 
                 return (
                   <div key={person.name} className={`table-row ${rowState}`}>
-                    <div className="person" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div className="person" style={{ display: 'flex', alignItems: 'center' }}>
                       <strong>{toDisplayName(person.name)}</strong>
+                    </div>
+                    <span>
                       <span
                         className={`status-tag ${statusTone}`}
                         role={canOpenMatch ? 'button' : undefined}
@@ -3723,7 +3872,7 @@ function App() {
                       >
                         {statusLabel}
                       </span>
-                    </div>
+                    </span>
                     <span>{dominantGroup}</span>
                     <span className="badge-group">
                       {shiftTone ? (
@@ -3794,6 +3943,7 @@ function App() {
           ) : (
             <div className="table-row">
               <span>{t('暂无数据')}</span>
+              <span>--</span>
               <span>--</span>
               <span>--</span>
               <span>--</span>
