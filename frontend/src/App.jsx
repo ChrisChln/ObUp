@@ -273,8 +273,11 @@ const TRANSLATIONS = {
     '选择员工': 'Select Employee',
     '生成预览': 'Preview',
     '打印报告': 'Print',
+    '生成': 'Generate',
     '请先选择员工': 'Please select an employee first',
     '报告生成失败，请允许弹窗后重试。': 'Failed to open report window. Please allow pop-ups and retry.',
+    '生成中': 'Generating',
+    '正在生成日报，请稍候…': 'Generating report, please wait...',
     '报告摘要': 'Summary',
     '时间线': 'Timeline',
     '筛选条件': 'Filters',
@@ -2523,12 +2526,23 @@ function App() {
           const startLabel = Number.isFinite(startMs)
             ? new Date(startMs).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
             : '--'
+          const dominantStage = getDominantStageKey(person)
           const units =
-            Number(person.pickingUnits || 0) +
-            Number(person.sortingUnits || 0) +
-            Number(person.packingSingleUnits || 0) +
-            Number(person.packingMultiUnits || 0)
-          const ewh = Number(person.ewhHours || 0)
+            dominantStage === 'picking'
+              ? Number(person.pickingUnits || 0)
+              : dominantStage === 'sorting'
+                ? Number(person.sortingUnits || 0)
+                : dominantStage === 'packing'
+                  ? Number(person.packingSingleUnits || 0) + Number(person.packingMultiUnits || 0)
+                  : 0
+          const ewh =
+            dominantStage === 'picking'
+              ? Number(person.pickingEwhHours || 0)
+              : dominantStage === 'sorting'
+                ? Number(person.sortingEwhHours || 0)
+                : dominantStage === 'packing'
+                  ? Number(person.packingSingleEwhHours || 0) + Number(person.packingMultiEwhHours || 0)
+                  : 0
           const hours = Number(person.attendanceHours || 0)
           const eff = ewh > 0 ? units / ewh : null
           const ratio = calcWorkRatioPercent(ewh, hours)
@@ -3792,6 +3806,15 @@ function App() {
                 </div>
               ) : null}
             </div>
+            {reportLoading ? (
+              <div className="report-loading" role="status" aria-live="polite">
+                <span className="report-loading__spinner" aria-hidden />
+                <span>{t('正在生成日报，请稍候…')}</span>
+                <div className="report-loading__bar" aria-hidden>
+                  <span />
+                </div>
+              </div>
+            ) : null}
             <div className="settings-footer">
               <span>
                 {t('记录数')}: {reportType === 'single' ? reportEmployeeOptions.length : sortedDetailRows.length}
@@ -3799,19 +3822,11 @@ function App() {
               <div style={{ display: 'flex', gap: 8 }}>
                 <button
                   type="button"
-                  className="ghost"
+                  className="primary"
                   onClick={() => handleGenerateReport(false)}
                   disabled={reportLoading || reportEmployeeOptionsLoading}
                 >
-                  {t('生成预览')}
-                </button>
-                <button
-                  type="button"
-                  className="primary"
-                  onClick={() => handleGenerateReport(true)}
-                  disabled={reportLoading || reportEmployeeOptionsLoading}
-                >
-                  {t('打印报告')}
+                  {reportLoading ? t('生成中') : t('生成')}
                 </button>
               </div>
             </div>
