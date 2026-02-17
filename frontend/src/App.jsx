@@ -271,8 +271,11 @@ const TRANSLATIONS = {
     '报告中心': 'Report Center',
     '报告类型': 'Report Type',
     '单个员工报告': 'Single Employee',
-    '整个岗位报告（含时间线）': 'Role Report (with timeline)',
+    '整个岗位报告（含时间线）': 'Dairy Report',
     '选择员工': 'Select Employee',
+    '选择日期': 'Date',
+    '岗位类型': 'Position',
+    '班次': 'Shift',
     '生成预览': 'Preview',
     '打印报告': 'Print',
     '生成': 'Generate',
@@ -288,7 +291,7 @@ const TRANSLATIONS = {
     '否': 'No',
     '记录数': 'Rows',
     '员工报告': 'Employee Report',
-    '岗位报告': 'Role Report',
+    '岗位报告': 'Dairy Report',
     '岗位': 'Role',
     '最近30天': 'Last 30 days',
     '数据天数': 'Days with data',
@@ -948,6 +951,9 @@ function App() {
   const [reportPreviewHtml, setReportPreviewHtml] = useState('')
   const [reportType, setReportType] = useState('single')
   const [reportEmployeeName, setReportEmployeeName] = useState('')
+  const [reportDate, setReportDate] = useState(selectedDate)
+  const [reportPosition, setReportPosition] = useState('all')
+  const [reportShift, setReportShift] = useState('all')
   const [reportLoading, setReportLoading] = useState(false)
   const [reportEmployeeOptions, setReportEmployeeOptions] = useState([])
   const [reportEmployeeOptionsLoading, setReportEmployeeOptionsLoading] = useState(false)
@@ -975,6 +981,11 @@ function App() {
   const isTodaySelected = selectedDate === todayKey
   const selectedDateLabel =
     dateList.find((item) => item.key === selectedDate)?.label ?? labelFromKey(selectedDate, locale)
+
+  useEffect(() => {
+    if (!showReportDialog) return
+    setReportDate(selectedDate)
+  }, [showReportDialog, selectedDate])
 
   useEffect(() => {
     localStorage.setItem('obup.lang', lang)
@@ -1223,10 +1234,39 @@ function App() {
         : person?.sources && person.sources.size
           ? normalizeWorkKey(Array.from(person.sources)[0])
           : normalizeName(person?.name)
+  const getPersonCandidateKeys = (person) => {
+    const keys = []
+    const pushKey = (value) => {
+      if (!value) return
+      if (!keys.includes(value)) keys.push(value)
+    }
+    pushKey(normalizeName(person?.attendanceName))
+    pushKey(person?.workKey)
+    pushKey(normalizeName(person?.name))
+    if (person?.sources && person.sources.size) {
+      Array.from(person.sources).forEach((source) => {
+        pushKey(normalizeWorkKey(source))
+        pushKey(normalizeName(source))
+      })
+    }
+    const primary = getPersonStartKey(person)
+    if (primary) {
+      keys.splice(0, 0, primary)
+      return Array.from(new Set(keys))
+    }
+    return keys
+  }
+  const getMapValueByPersonKeys = (map, person) => {
+    const keys = getPersonCandidateKeys(person)
+    for (let i = 0; i < keys.length; i += 1) {
+      const value = map.get(keys[i])
+      if (Number.isFinite(value)) return value
+    }
+    return Number.NaN
+  }
   const getFirstGunMinutesByMap = (person, startMap = startTimeMaps.all) => {
-    const startKey = getPersonStartKey(person)
-    const startMs = startMap.get(startKey)
-    const attendanceStartMs = attendanceStartMap.get(startKey)
+    const startMs = getMapValueByPersonKeys(startMap, person)
+    const attendanceStartMs = getMapValueByPersonKeys(attendanceStartMap, person)
     if (!Number.isFinite(startMs) || !Number.isFinite(attendanceStartMs)) return null
     return Math.max(0, Math.round((startMs - attendanceStartMs) / 60000))
   }
@@ -1527,6 +1567,17 @@ function App() {
 
     return rows
   }, [filteredDetailRows, detailSortKey, detailSortDir, detailStageFilter, startTimeMaps, attendanceStartMap, locale])
+  const reportRoleRowsPreviewCount = useMemo(() => {
+    const stageKey = reportPosition === 'all' ? 'all' : reportPosition
+    return detailRows.filter((person) => {
+      if (stageKey === 'picking' && !person.hasPicked) return false
+      if (stageKey === 'sorting' && !person.hasSorted) return false
+      if (stageKey === 'packing' && !person.hasPacked) return false
+      if (reportShift === 'day' && person.shiftType !== '早班') return false
+      if (reportShift === 'night' && person.shiftType !== '晚班') return false
+      return true
+    }).length
+  }, [detailRows, reportPosition, reportShift])
 
   const fetchUploadState = async (dateKey) => {
     if (!dateKey) return
@@ -2314,14 +2365,7 @@ function App() {
 
   const getReportStartLabel = (person) => {
     const startMap = getReportStartMap()
-    const startKey = person.attendanceName
-      ? normalizeName(person.attendanceName)
-      : person.workKey
-        ? person.workKey
-        : person.sources && person.sources.size
-          ? normalizeWorkKey(Array.from(person.sources)[0])
-          : normalizeName(person.name)
-    const startMs = startMap.get(startKey)
+    const startMs = getMapValueByPersonKeys(startMap, person)
     return Number.isFinite(startMs)
       ? new Date(startMs).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
       : '--'
@@ -2423,9 +2467,13 @@ function App() {
       .map((seg) => {
         const left = ((seg.start - dayStart) / daySpan) * 100
         const width = ((seg.end - seg.start) / daySpan) * 100
+        const minutes = Math.max(0, Math.round(seg.end - seg.start))
+        const segTitle = `${getSegLabel(seg)} ${toTimelineClock(seg.start)} - ${toTimelineClock(
+          seg.end
+        )} (${minutes}m)`
         return `<span class="seg" style="left:${left}%;width:${Math.max(width, 0.2)}%;background:${getSegColor(
           seg
-        )};"></span>`
+        )};border:1px solid ${getSegColor(seg)};box-sizing:border-box;" title="${escapeHtml(segTitle)}"></span>`
       })
       .join('')}</div>`
 
@@ -2433,24 +2481,10 @@ function App() {
     rows
       .map((row) => {
         const segments = row.segments || []
-        const detailRowsHtml = segments
-          .map((seg) => {
-            const minutes = Math.max(0, Math.round(seg.end - seg.start))
-            return `<tr><td>${escapeHtml(getSegLabel(seg))}</td><td>${escapeHtml(
-              `${toTimelineClock(seg.start)} - ${toTimelineClock(seg.end)}`
-            )}</td><td>${minutes}</td></tr>`
-          })
-          .join('')
         return `<div class="timeline-person">
           <div class="timeline-head"><strong>${escapeHtml(row.name)}</strong>${renderTrackHtml(
           segments
         )}</div>
-          <table class="tiny-table">
-            <thead><tr><th>${escapeHtml(t('状态'))}</th><th>${escapeHtml(t('起止'))}</th><th>${escapeHtml(
-          t('时长(分钟)')
-        )}</th></tr></thead>
-            <tbody>${detailRowsHtml || `<tr><td colspan="3">--</td></tr>`}</tbody>
-          </table>
         </div>`
       })
       .join('')
@@ -2557,10 +2591,16 @@ function App() {
       th{background:#f3f4f6}
       .timeline-person{margin-bottom:14px}
       .timeline-head{display:grid;grid-template-columns:220px 1fr;align-items:center;gap:8px;margin-bottom:6px}
-      .track{position:relative;height:14px;background:#eef2f7;border-radius:99px;overflow:hidden}
+      .track{position:relative;height:14px;background:#eef2f7;border:1px solid #94a3b8;border-radius:99px;overflow:hidden}
       .seg{position:absolute;top:0;height:100%}
       .tiny-table th,.tiny-table td{font-size:11px;padding:4px 6px}
-      @media print { body{margin:10mm} }
+      @media print {
+        body{margin:10mm}
+        .track,.seg{
+          -webkit-print-color-adjust:exact;
+          print-color-adjust:exact;
+        }
+      }
     </style>
   </head>
   <body>
@@ -2717,10 +2757,7 @@ function App() {
           if (!person) return
 
           const startMap = buildStartTimeMap(combined, effectiveNameMap, 'all')
-          const startKey = person.attendanceName
-            ? normalizeName(person.attendanceName)
-            : person.workKey || normalizeName(person.name)
-          const startMs = startMap.get(startKey)
+          const startMs = getMapValueByPersonKeys(startMap, person)
           const startLabel = Number.isFinite(startMs)
             ? new Date(startMs).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
             : '--'
@@ -2822,55 +2859,214 @@ function App() {
       return
     }
 
-    const rows = sortedDetailRows
-    const summaryHtml = [
-      [t('岗位'), stageLabel],
-      [t('记录数'), rows.length],
-      [t('筛选条件'), `${teamFilter === 'all' ? t('全部班组') : t(teamFilter)} / ${t('仅异常')} ${detailOnlyAbnormal ? t('是') : t('否')}`],
-      [t('件数'), rows.reduce((acc, row) => acc + getReportUnitsForStage(row), 0)],
-      [t('有效工时'), rows.reduce((acc, row) => acc + getReportEwhForStage(row), 0).toFixed(2)],
-    ]
-      .map(([k, v]) => `<div class="card"><strong>${escapeHtml(k)}</strong><div>${escapeHtml(v)}</div></div>`)
-      .join('')
+    setReportLoading(true)
+    try {
+      const dateKey = reportDate || selectedDate
+      const roleDatasets =
+        dateKey === selectedDate
+          ? {
+              picking: pickingReport,
+              sorting: sortingReport,
+              packing: packingReport,
+              attendance: attendanceReport,
+            }
+          : await fetchAllReportsByDate(dateKey)
 
-    const tableRows = rows
-      .map((person) => {
-        const units = getReportUnitsForStage(person)
-        const stageEwh = getReportEwhForStage(person)
-        const eff = stageEwh > 0 ? units / stageEwh : null
-        const ratio = calcWorkRatioPercent(stageEwh, person.attendanceHours)
-        const dominantGroup = getDominantGroupLabel(person, t)
-        return `<tr>
-          <td>${escapeHtml(person.name || '--')}</td>
-          <td>${escapeHtml(dominantGroup)}</td>
-          <td>${escapeHtml(getReportStartLabel(person))}</td>
-          <td>${escapeHtml(stageEwh.toFixed(2))}</td>
-          <td>${escapeHtml(Number(person.attendanceHours || 0).toFixed(2))}</td>
-          <td>${units}</td>
-          <td>${escapeHtml(eff == null ? '--' : eff.toFixed(2))}</td>
-          <td>${escapeHtml(typeof person.compositeScore === 'number' ? person.compositeScore.toFixed(2) : '--')}</td>
-          <td>${escapeHtml(ratio == null ? '--' : `${ratio.toFixed(0)}%`)}</td>
-          <td>${escapeHtml(getReportStatus(person))}</td>
-        </tr>`
-      })
-      .join('')
-    const tableHtml = `<table><thead><tr>
-      <th>${escapeHtml(t('人员'))}</th><th>${escapeHtml(t('所属组'))}</th><th>${escapeHtml(t('开始工作'))}</th><th>${escapeHtml(t('有效工时'))}</th>
-      <th>${escapeHtml(t('工时'))}</th><th>${escapeHtml(t('件数'))}</th><th>${escapeHtml(t('时效'))}</th>
-      <th>${escapeHtml(t('综合分'))}</th><th>${escapeHtml(t('工作时间占比'))}</th><th>${escapeHtml(t('状态'))}</th>
-    </tr></thead><tbody>${tableRows || `<tr><td colspan="10">--</td></tr>`}</tbody></table>`
-
-    const timelineHtml = groupedTimeline.length
-      ? groupedTimeline
-          .map(
-            (group) =>
-              `<h3>${escapeHtml(group.label)}</h3>${renderTimelineRowsHtml(group.rows)}`
+      const roleCombined = buildCombinedReport(
+        roleDatasets.picking,
+        roleDatasets.sorting,
+        roleDatasets.packing
+      )
+      const baseRows = buildDetailRows(
+        roleCombined,
+        roleDatasets.picking,
+        roleDatasets.sorting,
+        roleDatasets.packing,
+        roleDatasets.attendance,
+        effectiveNameMap
+      )
+      const stageKey = reportPosition === 'all' ? 'all' : reportPosition
+      const shiftLabel = reportShift === 'day' ? t('早班') : reportShift === 'night' ? t('晚班') : t('全部班次')
+      const stageLabelForReport =
+        stageKey === 'picking'
+          ? t('拣货')
+          : stageKey === 'sorting'
+            ? t('分拨')
+            : stageKey === 'packing'
+              ? t('打包')
+              : t('拣货+分拨+打包')
+      const getUnitsByStage = (person) => {
+        if (stageKey === 'picking') return Number(person.pickingUnits || 0)
+        if (stageKey === 'sorting') return Number(person.sortingUnits || 0)
+        if (stageKey === 'packing') {
+          return Number(person.packingSingleUnits || 0) + Number(person.packingMultiUnits || 0)
+        }
+        return (
+          Number(person.pickingUnits || 0) +
+          Number(person.sortingUnits || 0) +
+          Number(person.packingSingleUnits || 0) +
+          Number(person.packingMultiUnits || 0)
+        )
+      }
+      const getEwhByStage = (person) => {
+        if (stageKey === 'picking') return Number(person.pickingEwhHours || 0)
+        if (stageKey === 'sorting') return Number(person.sortingEwhHours || 0)
+        if (stageKey === 'packing') {
+          return (
+            Number(person.packingSingleEwhHours || 0) + Number(person.packingMultiEwhHours || 0)
           )
-          .join('')
-      : `<div class="card">--</div>`
-    const title = `${t('岗位报告')} - ${stageLabel}`
-    openReportWindow(title, buildReportHtml(title, summaryHtml, tableHtml, timelineHtml), printNow)
-    setShowReportDialog(false)
+        }
+        return Number(person.ewhHours || 0)
+      }
+      const rows = baseRows.filter((person) => {
+        if (stageKey === 'picking' && !person.hasPicked) return false
+        if (stageKey === 'sorting' && !person.hasSorted) return false
+        if (stageKey === 'packing' && !person.hasPacked) return false
+        if (reportShift === 'day' && person.shiftType !== '早班') return false
+        if (reportShift === 'night' && person.shiftType !== '晚班') return false
+        return true
+      })
+      if (!rows.length) {
+        alert(t('暂无数据'))
+        return
+      }
+      const rowsSortedByUnits = rows
+        .slice()
+        .sort((a, b) => getUnitsByStage(b) - getUnitsByStage(a))
+
+      const uphRankRows = rowsSortedByUnits
+        .map((person) => {
+          const units = getUnitsByStage(person)
+          const ewh = getEwhByStage(person)
+          const eff = ewh > 0 ? units / ewh : null
+          return { person, eff }
+        })
+        .filter((item) => Number.isFinite(item.eff))
+      const uphTopSet = new Set()
+      const uphBottomSet = new Set()
+      if (uphRankRows.length) {
+        const orderedByUph = uphRankRows.slice().sort((a, b) => b.eff - a.eff)
+        const topCount = Math.max(1, Math.ceil(orderedByUph.length * 0.1))
+        const bottomCount = Math.max(1, Math.ceil(orderedByUph.length * 0.2))
+        orderedByUph.slice(0, topCount).forEach((item) => uphTopSet.add(item.person))
+        orderedByUph
+          .slice(Math.max(orderedByUph.length - bottomCount, 0))
+          .forEach((item) => uphBottomSet.add(item.person))
+      }
+      const unitsTopSet = new Set()
+      const unitsBottomSet = new Set()
+      const unitsRankRows = rowsSortedByUnits.filter((person) => Number.isFinite(getUnitsByStage(person)))
+      if (unitsRankRows.length) {
+        const topCount = Math.max(1, Math.ceil(unitsRankRows.length * 0.1))
+        const bottomCount = Math.max(1, Math.ceil(unitsRankRows.length * 0.2))
+        unitsRankRows.slice(0, topCount).forEach((person) => unitsTopSet.add(person))
+        unitsRankRows
+          .slice(Math.max(unitsRankRows.length - bottomCount, 0))
+          .forEach((person) => unitsBottomSet.add(person))
+      }
+      const scoreTopSet = new Set()
+      const scoreBottomSet = new Set()
+      const scoreRankRows = rowsSortedByUnits
+        .filter((person) => Number.isFinite(person.compositeScore))
+        .sort((a, b) => b.compositeScore - a.compositeScore)
+      if (scoreRankRows.length) {
+        const topCount = Math.max(1, Math.ceil(scoreRankRows.length * 0.1))
+        const bottomCount = Math.max(1, Math.ceil(scoreRankRows.length * 0.2))
+        scoreRankRows.slice(0, topCount).forEach((person) => scoreTopSet.add(person))
+        scoreRankRows
+          .slice(Math.max(scoreRankRows.length - bottomCount, 0))
+          .forEach((person) => scoreBottomSet.add(person))
+      }
+
+      const roleStartMap = buildStartTimeMap(roleCombined, effectiveNameMap, stageKey)
+      const getStartLabelByMap = (person) => {
+        const startMs = getMapValueByPersonKeys(roleStartMap, person)
+        return Number.isFinite(startMs)
+          ? new Date(startMs).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
+          : '--'
+      }
+
+      const summaryHtml = [
+        [t('岗位'), stageLabelForReport],
+        [t('日期'), dateKey],
+        [t('班次'), shiftLabel],
+        [t('件数'), rowsSortedByUnits.reduce((acc, row) => acc + getUnitsByStage(row), 0)],
+      ]
+        .map(([k, v]) => `<div class="card"><strong>${escapeHtml(k)}</strong><div>${escapeHtml(v)}</div></div>`)
+        .join('')
+
+      const tableRows = rowsSortedByUnits
+        .map((person) => {
+          const units = getUnitsByStage(person)
+          const stageEwh = getEwhByStage(person)
+          const eff = stageEwh > 0 ? units / stageEwh : null
+          const dominantGroup = getDominantGroupLabel(person, t)
+          const isWhitelistRow = Boolean(getWhitelistRole(person))
+          const rowBg = isWhitelistRow ? 'background:#dbeafe;color:#1e3a8a;' : ''
+          const uphBg = uphTopSet.has(person)
+            ? 'background:#dcfce7;color:#166534;font-weight:700;'
+            : uphBottomSet.has(person)
+              ? 'background:#fee2e2;color:#991b1b;font-weight:700;'
+              : ''
+          const unitsBg = unitsTopSet.has(person)
+            ? 'background:#dcfce7;color:#166534;font-weight:700;'
+            : unitsBottomSet.has(person)
+              ? 'background:#fee2e2;color:#991b1b;font-weight:700;'
+              : ''
+          const scoreBg = scoreTopSet.has(person)
+            ? 'background:#dcfce7;color:#166534;font-weight:700;'
+            : scoreBottomSet.has(person)
+              ? 'background:#fee2e2;color:#991b1b;font-weight:700;'
+              : ''
+          const unitsCellBg = isWhitelistRow ? '' : unitsBg
+          const uphCellBg = isWhitelistRow ? '' : uphBg
+          const scoreCellBg = isWhitelistRow ? '' : scoreBg
+          return `<tr style="${rowBg}">
+            <td>${escapeHtml(person.name || '--')}</td>
+            <td>${escapeHtml(dominantGroup)}</td>
+            <td>${escapeHtml(getStartLabelByMap(person))}</td>
+            <td>${escapeHtml(stageEwh.toFixed(2))}</td>
+            <td>${escapeHtml(Number(person.attendanceHours || 0).toFixed(2))}</td>
+            <td style="${unitsCellBg}">${units}</td>
+            <td style="${uphCellBg}">${escapeHtml(eff == null ? '--' : eff.toFixed(2))}</td>
+            <td style="${scoreCellBg}">${escapeHtml(typeof person.compositeScore === 'number' ? person.compositeScore.toFixed(2) : '--')}</td>
+          </tr>`
+        })
+        .join('')
+      const tableHtml = `<table><thead><tr>
+        <th>${escapeHtml(t('人员'))}</th><th>${escapeHtml(t('所属组'))}</th><th>${escapeHtml(t('开始工作'))}</th><th>${escapeHtml(t('有效工时'))}</th>
+        <th>${escapeHtml(t('工时'))}</th><th>${escapeHtml(t('件数'))}</th><th>${escapeHtml(t('时效'))}</th>
+        <th>${escapeHtml(t('综合分'))}</th>
+      </tr></thead><tbody>${tableRows || `<tr><td colspan="8">--</td></tr>`}</tbody></table>`
+
+      const roleAttendanceWindowMap = buildAttendanceWindowMap(roleDatasets.attendance, effectiveNameMap)
+      const allowedNames = new Set(
+        rowsSortedByUnits.flatMap((person) =>
+          [normalizeName(person.name), normalizeName(person.attendanceName)].filter(Boolean)
+        )
+      )
+      const roleTimelineRows = roleCombined
+        ? buildTimelineRowsFromReport(roleCombined, roleAttendanceWindowMap).filter((row) => {
+            if (!allowedNames.has(normalizeName(row.name))) return false
+            if (stageKey === 'all') return true
+            return row.segments.some((seg) => seg.stage === stageKey)
+          })
+        : []
+      const groupedRoleTimeline = groupTimelineRows(roleTimelineRows)
+      const timelineHtml = groupedRoleTimeline.length
+        ? groupedRoleTimeline
+            .map(
+              (group) =>
+                `<h3>${escapeHtml(group.label)}</h3>${renderTimelineRowsHtml(group.rows)}`
+            )
+            .join('')
+        : `<div class="card">--</div>`
+      const title = `Dairy Report - ${stageLabelForReport}`
+      openReportWindow(title, buildReportHtml(title, summaryHtml, tableHtml, timelineHtml), printNow)
+      setShowReportDialog(false)
+    } finally {
+      setReportLoading(false)
+    }
   }
 
   const exportDetailExcel = async () => {
@@ -2883,15 +3079,8 @@ function App() {
     const startMap = startTimeMaps.all
 
     const toStartLabel = (person) => {
-      const startKey = person.attendanceName
-        ? normalizeName(person.attendanceName)
-        : person.workKey
-          ? person.workKey
-          : person.sources && person.sources.size
-            ? normalizeWorkKey(Array.from(person.sources)[0])
-            : normalizeName(person.name)
-      const startMs = startMap.get(startKey)
-      const attendanceStartMs = attendanceStartMap.get(startKey)
+      const startMs = getMapValueByPersonKeys(startMap, person)
+      const attendanceStartMs = getMapValueByPersonKeys(attendanceStartMap, person)
       if (!Number.isFinite(startMs) || !Number.isFinite(attendanceStartMs)) return ''
       return Math.max(0, Math.round((startMs - attendanceStartMs) / 60000))
     }
@@ -4034,7 +4223,7 @@ function App() {
                   onClick={() => setReportType('role')}
                   disabled={reportLoading}
                 >
-                  {t('整个岗位报告（含时间线）')}
+                  Dairy Report
                 </button>
                 </div>
               </div>
@@ -4056,7 +4245,47 @@ function App() {
                     ))}
                   </datalist>
                 </div>
-              ) : null}
+              ) : (
+                <>
+                  <div className="settings-item">
+                    <label className="match-name">{t('选择日期')}</label>
+                    <input
+                      className="settings-input"
+                      type="date"
+                      value={reportDate || selectedDate}
+                      onChange={(event) => setReportDate(event.target.value)}
+                      disabled={reportLoading}
+                    />
+                  </div>
+                  <div className="settings-item">
+                    <label className="match-name">{t('岗位类型')}</label>
+                    <select
+                      className="settings-input"
+                      value={reportPosition}
+                      onChange={(event) => setReportPosition(event.target.value)}
+                      disabled={reportLoading}
+                    >
+                      <option value="all">{t('全部')}</option>
+                      <option value="picking">{t('拣货')}</option>
+                      <option value="sorting">{t('分拨')}</option>
+                      <option value="packing">{t('打包')}</option>
+                    </select>
+                  </div>
+                  <div className="settings-item">
+                    <label className="match-name">{t('班次')}</label>
+                    <select
+                      className="settings-input"
+                      value={reportShift}
+                      onChange={(event) => setReportShift(event.target.value)}
+                      disabled={reportLoading}
+                    >
+                      <option value="all">{t('全部班次')}</option>
+                      <option value="day">{t('早班')}</option>
+                      <option value="night">{t('晚班')}</option>
+                    </select>
+                  </div>
+                </>
+              )}
             </div>
             {reportLoading ? (
               <div className="report-loading" role="status" aria-live="polite">
@@ -4069,7 +4298,7 @@ function App() {
             ) : null}
             <div className="settings-footer">
               <span>
-                {t('记录数')}: {reportType === 'single' ? reportEmployeeOptions.length : sortedDetailRows.length}
+                {t('记录数')}: {reportType === 'single' ? reportEmployeeOptions.length : reportRoleRowsPreviewCount}
               </span>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button
