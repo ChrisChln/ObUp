@@ -168,12 +168,12 @@ const TRANSLATIONS = {
     '关闭': 'Close',
     '后续可加入中英版本切换': 'Language toggle',
     '人员明细': 'Details',
-    '人员工时可视化': 'Work timeline',
+    '工作时间线': 'Work timeline',
     '有效工时占比': 'Effective ratio',
     '人效均值': 'Avg UPH',
     '异常提示': 'Alerts',
     '异常人员': 'Abnormal',
-    '占比低于 75%': 'Ratio < 75%',
+    '时间比异常': 'Ratio issue',
     '账号未匹配': 'No match',
     '有效工时 / 基准工时(8h)': 'Effective / baseline (8h)',
     '分拨 单 / 小时': 'Sorting units / hr',
@@ -257,6 +257,7 @@ const TRANSLATIONS = {
     '异常': 'Issue',
     '匹配异常': 'Match Issue',
     '考勤异常': 'Attendance Issue',
+    '综合分异常': 'Score issue',
     '首枪异常': 'First-shot Issue',
     '组长': 'Leader',
     '已匹配': 'Matched',
@@ -1436,9 +1437,16 @@ function App() {
             !exempt &&
             hasAttendanceData &&
             (!person.attendanceMatched || person.attendanceHours <= 0)
-          const ratioIssue = !exempt && ratio !== null && (ratio < 75 || ratio > 100)
+          const attendanceRatioIssue = !exempt && ratio !== null && ratio > 100
+          const lowRatioIssue = !exempt && ratio !== null && ratio < 75
+          const scoreRatioIssue =
+            !exempt &&
+            ratio !== null &&
+            Number.isFinite(Number(person.compositeScore)) &&
+            Number(person.compositeScore) < 90 &&
+            Number(person.compositeScore) < ratio
           const firstGunIssue = !exempt && Number.isFinite(firstGunMinutes) && firstGunMinutes > 20
-          if (!(forcedIssue || matchIssue || ratioIssue || firstGunIssue)) return false
+          if (!(forcedIssue || matchIssue || attendanceRatioIssue || lowRatioIssue || scoreRatioIssue || firstGunIssue)) return false
         }
         if (detailStageFilter === 'picking' && !(person.groups.has('拣货') || person.hasPicked)) return false
         if (detailStageFilter === 'sorting' && !(person.groups.has('分拨') || person.hasSorted)) return false
@@ -1539,6 +1547,10 @@ function App() {
     }
 
     rows.sort((a, b) => {
+      const aWhitelist = Boolean(getWhitelistRole(a))
+      const bWhitelist = Boolean(getWhitelistRole(b))
+      if (aWhitelist !== bWhitelist) return aWhitelist ? 1 : -1
+
       const av = getVal(a)
       const bv = getVal(b)
 
@@ -1566,7 +1578,7 @@ function App() {
     })
 
     return rows
-  }, [filteredDetailRows, detailSortKey, detailSortDir, detailStageFilter, startTimeMaps, attendanceStartMap, locale])
+  }, [filteredDetailRows, detailSortKey, detailSortDir, detailStageFilter, startTimeMaps, attendanceStartMap, locale, whitelistRoleMap])
   const reportRoleRowsPreviewCount = useMemo(() => {
     const stageKey = reportPosition === 'all' ? 'all' : reportPosition
     return detailRows.filter((person) => {
@@ -2406,12 +2418,19 @@ function App() {
       !whitelistExempt &&
       hasAttendanceData &&
       (!person.attendanceMatched || person.attendanceHours <= 0)
-    const ratioIssue = !whitelistExempt && ratio !== null && (ratio < 75 || ratio > 100)
+    const attendanceRatioIssue = !whitelistExempt && ratio !== null && ratio > 100
+    const lowRatioIssue = !whitelistExempt && ratio !== null && ratio < 75
+    const scoreRatioIssue =
+      !whitelistExempt &&
+      ratio !== null &&
+      Number.isFinite(Number(person.compositeScore)) &&
+      Number(person.compositeScore) < 90 &&
+      Number(person.compositeScore) < ratio
     const firstGunIssue =
       !whitelistExempt && Number.isFinite(firstGunMinutes) && firstGunMinutes > 20
     const waitingAttendance = !hasAttendanceData && person.ewhHours > 0
     const matchedByManual = person.attendanceName && effectiveNameMap[person.attendanceName]
-    const hasIssue = forcedIssue || matchIssue || ratioIssue || firstGunIssue
+    const hasIssue = forcedIssue || matchIssue || attendanceRatioIssue || lowRatioIssue || scoreRatioIssue || firstGunIssue
     return whitelistRole
       ? t(whitelistRole)
       : waitingAttendance
@@ -2420,8 +2439,12 @@ function App() {
           ? t('匹配异常')
           : firstGunIssue
             ? t('首枪异常')
-          : ratioIssue
+          : attendanceRatioIssue
             ? t('考勤异常')
+            : lowRatioIssue
+              ? t('时间比异常')
+              : scoreRatioIssue
+                ? t('综合分异常')
             : matchedByManual
               ? t('已匹配')
               : t('正常')
@@ -3167,12 +3190,19 @@ function App() {
         !whitelistExempt &&
         hasAttendance &&
         (!person.attendanceMatched || person.attendanceHours <= 0)
-      const ratioIssue = !whitelistExempt && ratio !== null && (ratio < 75 || ratio > 100)
+      const attendanceRatioIssue = !whitelistExempt && ratio !== null && ratio > 100
+      const lowRatioIssue = !whitelistExempt && ratio !== null && ratio < 75
+      const scoreRatioIssue =
+        !whitelistExempt &&
+        ratio !== null &&
+        Number.isFinite(Number(person.compositeScore)) &&
+        Number(person.compositeScore) < 90 &&
+        Number(person.compositeScore) < ratio
       const firstGunIssue =
         !whitelistExempt && Number.isFinite(firstGunMinutes) && firstGunMinutes > 20
       const waitingAttendance = !hasAttendance && person.ewhHours > 0
       const matchedByManual = person.attendanceName && effectiveNameMap[person.attendanceName]
-      const hasIssue = forcedIssue || matchIssue || ratioIssue || firstGunIssue
+      const hasIssue = forcedIssue || matchIssue || attendanceRatioIssue || lowRatioIssue || scoreRatioIssue || firstGunIssue
       const label = whitelistRole
         ? t(whitelistRole)
         : waitingAttendance
@@ -3181,8 +3211,12 @@ function App() {
             ? t('匹配异常')
             : firstGunIssue
               ? t('首枪异常')
-            : ratioIssue
+            : attendanceRatioIssue
               ? t('考勤异常')
+              : lowRatioIssue
+                ? t('时间比异常')
+                : scoreRatioIssue
+                  ? t('综合分异常')
               : matchedByManual
                 ? t('已匹配')
                 : t('正常')
@@ -3704,7 +3738,7 @@ function App() {
       <section className="timeline-section">
         <div className="timeline-header">
           <div>
-            <h2>{t('人员工时可视化')}</h2>
+            <h2>{t('工作时间线')}</h2>
           </div>
           <div className="legend">
             <input
@@ -4032,8 +4066,16 @@ function App() {
                   !whitelistExempt &&
                   hasAttendanceData &&
                   (!person.attendanceMatched || person.attendanceHours <= 0)
-                const ratioIssue =
-                  !whitelistExempt && ratio !== null && (ratio < 75 || ratio > 100)
+                const attendanceRatioIssue =
+                  !whitelistExempt && ratio !== null && ratio > 100
+                const lowRatioIssue =
+                  !whitelistExempt && ratio !== null && ratio < 75
+                const scoreRatioIssue =
+                  !whitelistExempt &&
+                  ratio !== null &&
+                  Number.isFinite(Number(person.compositeScore)) &&
+                  Number(person.compositeScore) < 90 &&
+                  Number(person.compositeScore) < ratio
                 const waitingAttendance =
                   !hasAttendanceData && person.ewhHours > 0
                 const matchedByManual =
@@ -4041,7 +4083,8 @@ function App() {
                 const firstGunMinutes = getFirstGunMinutesByMap(person, startTimeMaps.all)
                 const firstGunIssue =
                   !whitelistExempt && Number.isFinite(firstGunMinutes) && firstGunMinutes > 20
-                const hasIssue = forcedIssue || matchIssue || ratioIssue || firstGunIssue
+                const hasIssue =
+                  forcedIssue || matchIssue || attendanceRatioIssue || lowRatioIssue || scoreRatioIssue || firstGunIssue
                 const canOpenMatch =
                   person.attendanceName &&
                   (hasIssue ||
@@ -4055,8 +4098,12 @@ function App() {
                       ? t('匹配异常')
                       : firstGunIssue
                         ? t('首枪异常')
-                      : ratioIssue
+                      : attendanceRatioIssue
                         ? t('考勤异常')
+                        : lowRatioIssue
+                          ? t('时间比异常')
+                          : scoreRatioIssue
+                            ? t('综合分异常')
                         : matchedByManual
                           ? t('已匹配')
                           : t('正常')
@@ -4071,12 +4118,12 @@ function App() {
                       : matchedByManual
                         ? 'matched'
                         : 'success'
-                // 行级背景状态：红 = 时效异常（ratioIssue），黄 = 未匹配（matchIssue），白 = 正常/白名单
+                // 行级背景状态：红 = 比例/综合分异常，黄 = 未匹配/首枪异常，白 = 正常/白名单
                 let rowState = 'row-normal'
                 // 优先显示“未匹配”为黄色，其次显示时效异常为红色
                 if (matchIssue) rowState = 'row-warning'
                 else if (firstGunIssue) rowState = 'row-warning'
-                else if (ratioIssue) rowState = 'row-error'
+                else if (attendanceRatioIssue || lowRatioIssue || scoreRatioIssue) rowState = 'row-error'
                 const sourceName =
                   person.sources && person.sources.size ? Array.from(person.sources)[0] : person.name
                 const startLabel = Number.isFinite(firstGunMinutes) ? `${firstGunMinutes}m` : '--'
@@ -4526,7 +4573,7 @@ function App() {
         >
           <div className="settings-panel match-panel" onClick={(event) => event.stopPropagation()}>
             <div className="settings-header">
-              <h3>{t('人员匹配（以考勤姓名为主）')}</h3>
+              <h3>{t('人员匹配')}</h3>
               <button type="button" onClick={() => setShowMatch(false)}>
                 {t('关闭')}
               </button>
