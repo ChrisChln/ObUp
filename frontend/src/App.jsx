@@ -4608,22 +4608,17 @@ function App() {
                   </div>
                 ) : null}
                 <div className="match-whitelist-actions">
-                  <button
-                    type="button"
-                    className={selectedMatchWhitelistRole === '组长' ? 'chip active' : 'chip'}
-                    onClick={() => updateWhitelistRole(selectedMatchName, '组长')}
-                    disabled={!whitelistUnlocked}
-                  >
-                    {t('组长')}
-                  </button>
-                  <button
-                    type="button"
-                    className={selectedMatchWhitelistRole === '异常' ? 'chip active' : 'chip'}
-                    onClick={() => updateWhitelistRole(selectedMatchName, '异常')}
-                    disabled={!whitelistUnlocked}
-                  >
-                    {t('异常')}
-                  </button>
+                  {whitelistRoles.map((role) => (
+                    <button
+                      key={role}
+                      type="button"
+                      className={selectedMatchWhitelistRole === role ? 'chip active' : 'chip'}
+                      onClick={() => updateWhitelistRole(selectedMatchName, role)}
+                      disabled={!whitelistUnlocked}
+                    >
+                      {t(role)}
+                    </button>
+                  ))}
                   <button
                     type="button"
                     className="chip"

@@ -84,6 +84,13 @@ const toTime = () => {
   return now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
+const formatCreatedAt = (createdAt) => {
+  if (!createdAt) return toTime()
+  const date = new Date(createdAt)
+  if (Number.isNaN(date.getTime())) return toTime()
+  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+}
+
 const pad2 = (value) => String(value).padStart(2, '0')
 const toDateKey = (date) =>
   `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
@@ -491,12 +498,24 @@ const buildAttendanceReportFromPunches = async (dateKey) => {
   const windowStart = start.toISOString()
   const windowEnd = end.toISOString()
 
-  const { data: punches, error } = await punchSupabase
+  let punches = null
+  let error = null
+  ;({ data: punches, error } = await punchSupabase
     .from('ob_punches')
-    .select('staff_id, action, created_at')
+    .select('staff_id, action, created_at, Position')
     .gte('created_at', windowStart)
     .lt('created_at', windowEnd)
-    .order('created_at', { ascending: true })
+    .order('created_at', { ascending: true }))
+
+  // Some environments do not expose Position (or use lowercase), fallback to base fields.
+  if (error) {
+    ;({ data: punches, error } = await punchSupabase
+      .from('ob_punches')
+      .select('staff_id, action, created_at')
+      .gte('created_at', windowStart)
+      .lt('created_at', windowEnd)
+      .order('created_at', { ascending: true }))
+  }
 
   if (error) {
     console.warn('Fetch ob_punches failed', error)
@@ -538,15 +557,23 @@ const buildAttendanceReportFromPunches = async (dateKey) => {
     const action = String(row.action || '').trim().toUpperCase()
     const ts = row.created_at ? new Date(row.created_at) : null
     if (!ts || Number.isNaN(ts.getTime())) return
-    if (!byStaff.has(staffId)) byStaff.set(staffId, [])
-    byStaff.get(staffId).push({ action, ts })
+    if (!byStaff.has(staffId)) byStaff.set(staffId, { events: [], position: '' })
+    const entry = byStaff.get(staffId)
+    entry.events.push({ action, ts })
+    const rawPosition =
+      row && Object.prototype.hasOwnProperty.call(row, 'Position')
+        ? row.Position
+        : row?.position
+    const position = String(rawPosition || '').trim()
+    if (position) entry.position = position
   })
 
   const stats = []
   const segments = {}
   let totalHours = 0
 
-  byStaff.forEach((events, staffId) => {
+  byStaff.forEach((payload, staffId) => {
+    const events = payload?.events || []
     if (!events.length) return
     const sorted = [...events].sort((a, b) => a.ts - b.ts)
     let openStart = null
@@ -581,6 +608,7 @@ const buildAttendanceReportFromPunches = async (dateKey) => {
       totalUnits: 0,
       ewhHours: hours,
       uph: 0,
+      position: payload?.position || '',
     })
 
     segments[name] = merged.map((seg) => ({
@@ -1107,7 +1135,7 @@ const fetchUploadStatus = async (date) => {
         result[type] = {
           status: exact.validation_status === 'reject' ? 'error' : 'success',
           dateKey: exact.work_date,
-          updated: toTime(),
+          updated: formatCreatedAt(exact.created_at),
           filename: exact.filename,
           originalName: exact.original_name,
           validationStatus: exact.validation_status,
